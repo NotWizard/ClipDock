@@ -373,8 +373,9 @@ enum SelfTest {
               panel.isVisible && panel.styleMask.contains(.nonactivatingPanel) && !panel.styleMask.contains(.titled))
         check("primary entry does not create the manager", windows.mainWindow == nil)
         if let screen = panel.screen {
-            check("native panel is anchored to available screen bottom", panel.frame == TroveWindows.clipboardPanelFrame(in: screen.visibleFrame))
+            check("native panel is anchored to full screen bottom", panel.frame == TroveWindows.clipboardPanelFrame(in: screen.frame))
         } else { check("native panel has a display", false) }
+        check("native panel stays above the Dock", panel.level.rawValue > CGWindowLevelForKey(.dockWindow))
         check("native search field owns keyboard input", panel.firstResponder is NSTextView)
         func searchField(in view: NSView?) -> NSSearchField? {
             guard let view else { return nil }
@@ -463,6 +464,9 @@ enum SelfTest {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         capture(panel, to: directory.appendingPathComponent("panel-native.png"))
         let geometry: [String: Any] = ["frame": NSStringFromRect(panel.frame), "keyWindow": panel.isKeyWindow,
+                                       "screenFrame": NSStringFromRect(panel.screen?.frame ?? .zero),
+                                       "visibleFrame": NSStringFromRect(panel.screen?.visibleFrame ?? .zero),
+                                       "windowLevel": panel.level.rawValue, "dockWindowLevel": CGWindowLevelForKey(.dockWindow),
                                        "nonactivating": panel.styleMask.contains(.nonactivatingPanel),
                                        "failures": failures]
         if let data = try? JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys]) {
@@ -636,10 +640,11 @@ enum SelfTest {
             if name == "main-ready" { UpdateChecker.shared.showReady(toInstallAndRelaunch: { _ in }) }
             if name == "main-downloading" { UpdateChecker.shared.showDownloadInitiated(cancellation: {}) }
             view = AnyView(MainWindowView(store: store, prefs: prefs, model: MainViewModel(store: store, prefs: prefs)))
-        case "quick":
+        case "quick", "quick-search":
             size = CGSize(width: 1200, height: 332)
             let model = MainViewModel(store: store, prefs: prefs)
             model.preparePanel()
+            if name == "quick-search" { model.isSearching = true }
             view = AnyView(QuickPasteView(model: model, store: store, prefs: prefs))
         case "settings":
             size = CGSize(width: 680, height: 540)
@@ -671,16 +676,14 @@ enum SelfTest {
             return
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(origin: NSPoint(x: 40, y: 40), size: NSSize(width: size.width, height: size.height)),
-            styleMask: name == "quick" ? [.borderless] : [.titled, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        let rect = NSRect(origin: NSPoint(x: 40, y: 40), size: size)
+        let window: NSWindow = ["quick", "quick-search"].contains(name)
+            ? QuickPanel(contentRect: rect, styleMask: [.nonactivatingPanel, .fullSizeContentView], backing: .buffered, defer: false)
+            : NSWindow(contentRect: rect, styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.contentView = NSHostingView(rootView: view)
-        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
 
         // Let SwiftUI lay out and the run loop deliver the first display pass.
         let deadline = Date().addingTimeInterval(1.6)

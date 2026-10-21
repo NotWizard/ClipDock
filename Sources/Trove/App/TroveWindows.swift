@@ -79,7 +79,7 @@ final class TroveWindows {
             )
             panel.title = "\(AppIdentity.name) — 剪贴板"
             panel.isFloatingPanel = true
-            panel.level = .floating
+            panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
             panel.hidesOnDeactivate = false
             panel.isMovableByWindowBackground = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -98,7 +98,7 @@ final class TroveWindows {
         guard let panel = quickPanel else { return }
         let pointer = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) ?? NSScreen.main else { return }
-        let frame = Self.clipboardPanelFrame(in: screen.visibleFrame)
+        let frame = Self.clipboardPanelFrame(in: screen.frame)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if panel.isVisible {
             panel.setFrame(frame, display: true)
@@ -116,9 +116,9 @@ final class TroveWindows {
         mainModel.searchFocusRequest += 1
     }
 
-    static func clipboardPanelFrame(in visibleFrame: NSRect) -> NSRect {
-        NSRect(x: visibleFrame.minX + 8, y: visibleFrame.minY + 8,
-               width: max(0, visibleFrame.width - 16), height: min(332, max(0, visibleFrame.height - 16)))
+    static func clipboardPanelFrame(in screenFrame: NSRect) -> NSRect {
+        NSRect(x: screenFrame.minX + 8, y: screenFrame.minY + 8,
+               width: max(0, screenFrame.width - 16), height: min(332, max(0, screenFrame.height - 16)))
     }
 
     func closeQuickPaste(restoreTarget: Bool = true) {

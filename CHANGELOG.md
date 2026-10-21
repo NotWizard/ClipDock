@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.4
+
+- Anchor the clipboard panel to the full display frame and show it above the Dock, including when the Dock is on a screen edge.
+- Move the native overflow menu to the toolbar's trailing edge while preserving the centered search and Pinboard group.
+
 ## 1.2.3
 
 - Download updates inside ClipDock with byte progress and cancellation, using Sparkle 2.10.0.

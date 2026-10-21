@@ -144,6 +144,7 @@ struct QuickPasteView: View {
                 Button("关闭面板") { TroveWindows.shared.closeQuickPaste() }
             } label: { Image(systemName: hotKeys.conflicts.isEmpty ? "ellipsis" : "exclamationmark.circle").font(.system(size: 18)) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .fixedSize()
             .frame(width: 84, alignment: .trailing).accessibilityLabel("更多选项")
         }
         .buttonStyle(.plain)
