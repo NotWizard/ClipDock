@@ -45,9 +45,14 @@ enum SourceAppearance {
 
     static func readableHeader(_ color: NSColor) -> NSColor {
         let source = color.usingColorSpace(.sRGB) ?? .systemBlue
+        let scale = 0.98 / max(source.brightnessComponent, 0.001)
+        // Scale RGB together to preserve the icon's hue and saturation in sRGB.
+        let tint = source.saturationComponent < 0.12
+            ? NSColor(srgbRed: 0.72, green: 0.72, blue: 0.72, alpha: 1)
+            : NSColor(srgbRed: source.redComponent * scale, green: source.greenComponent * scale,
+                      blue: source.blueComponent * scale, alpha: 1)
         return NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1).blended(
-            withFraction: 0.44,
-            of: NSColor(calibratedHue: source.hueComponent, saturation: 0.9, brightness: 0.98, alpha: 1)
+            withFraction: 0.44, of: tint
         )!.usingColorSpace(.sRGB)!
     }
 
@@ -61,31 +66,53 @@ enum SourceAppearance {
         return 0.2126 * linear(c.redComponent) + 0.7152 * linear(c.greenComponent) + 0.0722 * linear(c.blueComponent)
     }
 
-    private static func dominantColor(in image: NSImage) -> NSColor? {
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
+    static func dominantColor(in image: NSImage) -> NSColor? {
+        let size = 32
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                         isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        image.draw(in: NSRect(x: 0, y: 0, width: 16, height: 16))
+        let bounds = NSRect(x: 0, y: 0, width: size, height: size)
+        NSColor.clear.setFill()
+        bounds.fill(using: .copy)
+        image.draw(in: bounds)
         NSGraphicsContext.restoreGraphicsState()
-        var buckets = [(weight: CGFloat, r: CGFloat, g: CGFloat, b: CGFloat)](repeating: (0, 0, 0, 0), count: 12)
-        for y in 0..<16 {
-            for x in 0..<16 {
+        var buckets = [(weight: CGFloat, r: CGFloat, g: CGFloat, b: CGFloat)](repeating: (0, 0, 0, 0), count: 24)
+        var opaqueArea: CGFloat = 0
+        var coloredArea: CGFloat = 0
+        for y in 0..<size {
+            for x in 0..<size {
                 guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-                      c.alphaComponent > 0.5, c.saturationComponent > 0.25, c.brightnessComponent > 0.2 else { continue }
-                let i = min(11, Int(c.hueComponent * 12))
-                let distance = pow(CGFloat(x) - 7.5, 2) + pow(CGFloat(y) - 7.5, 2)
-                let weight = c.saturationComponent * c.alphaComponent * exp(-distance / 12)
+                      c.alphaComponent > 0.5 else { continue }
+                opaqueArea += c.alphaComponent
+                guard c.saturationComponent > 0.2, c.brightnessComponent > 0.18 else { continue }
+                coloredArea += c.alphaComponent
+                let i = min(buckets.count - 1, Int(c.hueComponent * CGFloat(buckets.count)))
+                // Area leads; saturation only modestly favors a clear color over a muted one.
+                let weight = c.alphaComponent * (0.5 + 0.5 * c.saturationComponent)
                 buckets[i].weight += weight
                 buckets[i].r += c.redComponent * weight
                 buckets[i].g += c.greenComponent * weight
                 buckets[i].b += c.blueComponent * weight
             }
         }
-        guard let bucket = buckets.max(by: { $0.weight < $1.weight }), bucket.weight > 0 else { return nil }
-        return NSColor(srgbRed: bucket.r / bucket.weight, green: bucket.g / bucket.weight,
-                       blue: bucket.b / bucket.weight, alpha: 1)
+        guard opaqueArea > 0 else { return nil }
+        // A few antialiased pixels or a tiny colored badge must not tint a monochrome icon.
+        guard coloredArea / opaqueArea >= 0.03 else { return NSColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1) }
+        // Merge neighboring hues, including red across 0°/360°, without averaging unrelated colors.
+        let groups = buckets.indices.map { i -> (weight: CGFloat, r: CGFloat, g: CGFloat, b: CGFloat) in
+            let previous = buckets[(i + buckets.count - 1) % buckets.count]
+            let current = buckets[i]
+            let next = buckets[(i + 1) % buckets.count]
+            return (current.weight + 0.5 * (previous.weight + next.weight),
+                    current.r + 0.5 * (previous.r + next.r),
+                    current.g + 0.5 * (previous.g + next.g),
+                    current.b + 0.5 * (previous.b + next.b))
+        }
+        guard let group = groups.max(by: { $0.weight < $1.weight }), group.weight > 0 else { return nil }
+        return NSColor(srgbRed: group.r / group.weight, green: group.g / group.weight,
+                       blue: group.b / group.weight, alpha: 1)
     }
 }
 

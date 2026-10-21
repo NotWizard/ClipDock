@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1
+
+- Derive card-header colors from the entire source app icon, using color coverage with modest saturation weighting instead of favoring center pixels.
+- Combine nearby hues so gradients and red colors crossing the hue boundary remain one color family.
+- Keep monochrome app icons neutral gray and ignore tiny colored badges; preserve source hue and saturation when brightening headers.
+- Add regression checks for whole-icon coverage, monochrome icons, small badges, transparency, hue boundaries and readable header contrast.
+
 ## 1.2.0
 
 - Rename the app to ClipDock, with original clipboard-and-dock artwork and separate normal/paused menu-bar marks.

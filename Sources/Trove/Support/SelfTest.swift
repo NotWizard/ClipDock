@@ -210,8 +210,46 @@ enum SelfTest {
         check("shortcut reset uses valid stack masks",
               KeyCombo.decode(Preferences.shared.pasteStackShortcut)?.modifiers == KeyCombo.command | KeyCombo.control | KeyCombo.option)
 
-        let readable = ItemKind.allCases.allSatisfy { kind in
-            let color = SourceAppearance.readableHeader(kind.accent)
+        // Source colors must describe the whole icon, not just its center or a tiny badge.
+        func icon(_ draw: @escaping (NSRect) -> Void) -> NSImage {
+            NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+                draw(rect)
+                return true
+            }
+        }
+        let majority = SourceAppearance.dominantColor(in: icon { rect in
+            NSColor.green.setFill(); rect.fill()
+            NSColor.blue.setFill(); NSRect(x: 20, y: 20, width: 24, height: 24).fill()
+        })
+        check("source color follows whole-icon area over center", majority != nil && majority!.greenComponent > majority!.blueComponent)
+        let redSeam = SourceAppearance.dominantColor(in: icon { rect in
+            NSColor(srgbRed: 0.9, green: 0.05, blue: 0.1, alpha: 1).setFill(); rect.fill()
+            NSColor(srgbRed: 0.9, green: 0.1, blue: 0.05, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: 32, height: 64).fill()
+        })
+        check("source color joins red across hue boundary", redSeam != nil && redSeam!.redComponent > 0.7 && redSeam!.greenComponent < 0.2 && redSeam!.blueComponent < 0.2)
+        let monochrome = SourceAppearance.dominantColor(in: icon { rect in
+            NSColor.white.setFill(); rect.fill()
+            NSColor.black.setFill(); NSRect(x: 16, y: 16, width: 32, height: 32).fill()
+        })
+        check("monochrome source keeps a neutral header", monochrome != nil && SourceAppearance.readableHeader(monochrome!).saturationComponent < 0.02)
+        let noise = SourceAppearance.dominantColor(in: icon { rect in
+            NSColor.white.setFill(); rect.fill()
+            NSColor.blue.setFill(); NSRect(x: 0, y: 0, width: 4, height: 4).fill()
+        })
+        check("tiny colored badge does not tint monochrome source", noise != nil && noise!.saturationComponent < 0.02)
+        check("empty transparent icon has no representative color", SourceAppearance.dominantColor(in: icon { _ in }) == nil)
+        let transparent = SourceAppearance.dominantColor(in: icon { _ in
+            NSColor.red.setFill(); NSRect(x: 24, y: 24, width: 16, height: 16).fill()
+        })
+        check("transparent margins do not dilute source color", transparent != nil && transparent!.redComponent > 0.9 && transparent!.greenComponent < 0.1)
+        let colors = ItemKind.allCases.map(\.accent) + (0..<36).flatMap { hue in
+            [CGFloat(0), 0.25, 0.6, 1].map {
+                NSColor(calibratedHue: CGFloat(hue) / 36, saturation: $0, brightness: 0.8, alpha: 1)
+            }
+        }
+        let readable = colors.allSatisfy { source in
+            let color = SourceAppearance.readableHeader(source)
             return (SourceAppearance.luminance(color) + 0.05) / (SourceAppearance.luminance(SourceAppearance.headerInk) + 0.05) >= 4.5
         }
         check("bright source header text meets 4.5 contrast", readable)
