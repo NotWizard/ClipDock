@@ -95,10 +95,13 @@ if let index = arguments.firstIndex(of: "--snapshot"), arguments.count > index +
 }
 
 let app = NSApplication.shared
-if arguments.contains("--demo") || arguments.contains("--demo-update") {
+if arguments.contains("--demo") || arguments.contains("--demo-update") || arguments.contains("--demo-onboarding") {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-demo-\(UUID().uuidString)")
     setenv("TROVE_TEST_DATA_DIR", root.path, 1)
     MainActor.assumeIsolated { DemoContent.prepare(update: arguments.contains("--demo-update")) }
+    if arguments.contains("--demo-onboarding") {
+        MainActor.assumeIsolated { Preferences.shared.hasCompletedOnboarding = false }
+    }
 }
 let delegate = AppDelegate()
 app.delegate = delegate

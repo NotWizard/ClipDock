@@ -104,6 +104,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(item("设置…", #selector(openSettings), ","))
+        menu.addItem(item("使用指南…", #selector(openGuide), ""))
         menu.addItem(item("检查更新…", #selector(checkUpdates), ""))
         menu.addItem(item("清空历史…", #selector(eraseHistory), ""))
         menu.addItem(item("关于 \(AppIdentity.name)", #selector(openAbout), ""))
@@ -133,6 +134,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func openMain() { TroveWindows.shared.showMainWindow() }
     @objc private func openQuick() { TroveApp.shared.showQuickPaste() }
+    @objc private func openGuide() { TroveWindows.shared.showOnboarding() }
     @objc private func openStack() { TroveWindows.shared.showPasteStack() }
     @objc private func openSettings() { TroveWindows.shared.showSettings() }
     @objc private func checkUpdates() {

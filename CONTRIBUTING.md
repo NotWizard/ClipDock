@@ -49,6 +49,10 @@ open build/ClipDock.app
 
 核心检查 40 项、更新检查 33 项、原生面板检查 22 项通过。新增用例覆盖全图色块与中心色的竞争、红色色相边界、黑白图标、微小彩色角标、透明边缘，以及覆盖整圈色相的卡头文字对比度。另用 14 个本机来源图标（含 Xnip Helper）对比取色，并检查原生浮层的深浅色外观。
 
+### 1.2.2 的交互回归
+
+核心检查 45 项、更新检查 33 项、原生面板检查 30 项通过。覆盖搜索图标首次操作、现有编辑器焦点、输入法组合状态、成功取用后的排序及持久化、批量顺序、失败写入、Pinboard 手动顺序，以及指南的窗口复用、偏好保留和关闭行为。实机从文本编辑用全局快捷键唤起后，单击搜索图标即可立即输入并筛选；指南三步均检查了原生深浅色渲染。
+
 ## 演示与截图
 
 公开图片使用合成演示内容，不使用个人剪贴板历史。演示模式会建立独立的临时资料库；`--demo-update` 中的未来版本仅用于展示提醒。
@@ -56,11 +60,15 @@ open build/ClipDock.app
 ```bash
 ./build/ClipDock.app/Contents/MacOS/Trove --demo
 ./build/ClipDock.app/Contents/MacOS/Trove --demo-update
+./build/ClipDock.app/Contents/MacOS/Trove --demo-onboarding
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot quick /tmp/clipdock-light.png --appearance light --demo
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot quick /tmp/clipdock-dark.png --appearance dark --demo
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot main /tmp/clipdock-manager.png --appearance light --demo-update
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot about /tmp/clipdock-about.png --appearance light --demo-update
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot update /tmp/clipdock-update.png --appearance light --demo-update
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding /tmp/clipdock-guide.png --appearance light --demo
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding-keys /tmp/clipdock-guide-keys.png --appearance light --demo
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding-privacy /tmp/clipdock-guide-privacy.png --appearance dark --demo
 ```
 
 `--snapshot` 通过真实 AppKit / SwiftUI 视图渲染，不代替物理输入或跨应用行为验证。提交展示图前检查内容与版本标注。公开图片统一放在 `docs/public/`；本机取证资料及其他 `docs/` 内容不纳入发布。

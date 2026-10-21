@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- Fix the quick panel's search icon so one click expands and focuses the native search editor, including after opening with the global shortcut.
+- Replace the first-run checklist with an optional three-step Chinese guide covering clipboard use, shortcuts, optional direct-paste permission, and privacy settings. Replay it from “使用指南…”.
+- Promote an existing history entry after a successful copy or paste, without duplicating it; preserve multi-item selection order and manual Pinboard order.
+- Keep the recently used card visible when reopening the panel, and strengthen light-mode onboarding text contrast.
+
 ## 1.2.1
 
 - Derive card-header colors from the entire source app icon, using color coverage with modest saturation weighting instead of favoring center pixels.

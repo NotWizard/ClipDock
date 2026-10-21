@@ -150,142 +150,235 @@ struct ItemPreviewWindowView: View {
 // MARK: - Onboarding
 
 struct OnboardingView: View {
-    @ObservedObject var prefs: Preferences
-    var finish: () -> Void
-
-    @LocalState private var accessibilityGranted = Paster.shared.hasAccessibility
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Theme.accent.opacity(0.18))
-                    Image(nsImage: TroveBrand.statusIcon()).renderingMode(.template)
-                        .resizable().scaledToFit().frame(width: 30, height: 30)
-                        .foregroundStyle(Theme.accent)
-                }
-                .frame(width: 58, height: 58)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("欢迎使用 \(AppIdentity.name)")
-                        .font(.system(size: 20, weight: .semibold))
-                    Text("A time machine for your clipboard.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.bottom, 18)
-
-            step(
-                number: 1,
-                title: "\(AppIdentity.name) 会保存你复制的内容",
-                body: "Text, images, links, colours and files land here automatically. Pick a history limit you're comfortable with.",
-                done: true
-            ) {
-                Picker("", selection: $prefs.historyLimit) {
-                    Text("250 items").tag(250)
-                    Text("500 items").tag(500)
-                    Text("1,000 items").tag(1000)
-                    Text("Unlimited").tag(0)
-                }
-                .labelsHidden()
-                .frame(width: 140)
-            }
-
-            step(
-                number: 2,
-                title: "Paste straight into other apps",
-                body: accessibilityGranted
-                    ? "已获得辅助功能权限，可以直接粘贴。"
-                    : "直接粘贴需要 macOS 辅助功能权限。",
-                done: accessibilityGranted
-            ) {
-                Button(accessibilityGranted ? "Granted" : "Allow…") {
-                    Paster.shared.requestAccessibility()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        accessibilityGranted = Paster.shared.hasAccessibility
-                    }
-                }
-                .disabled(accessibilityGranted)
-            }
-
-            step(
-                number: 3,
-                title: "随时唤起 \(AppIdentity.name)",
-                body: "Press this shortcut in any app to bring up your clipboard.",
-                done: KeyCombo.decode(prefs.activateShortcut) != nil
-            ) {
-                ShortcutRecorder(encoded: $prefs.activateShortcut)
-                    .frame(width: 120, height: 24)
-                    .onChange(of: prefs.activateShortcut) { _, _ in
-                        HotKeyCenter.shared.apply(from: prefs)
-                    }
-            }
-
-            step(
-                number: 4,
-                title: "Keep it running",
-                body: "登录时打开 \(AppIdentity.name)，持续记录剪贴板。",
-                done: prefs.openAtLogin
-            ) {
-                Toggle("", isOn: $prefs.openAtLogin)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-
-            Spacer(minLength: 12)
-
-            HStack {
-                Text("Everything is stored locally on this Mac.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                Button("Get Started") {
-                    prefs.hasCompletedOnboarding = true
-                    finish()
-                }
-                .keyboardShortcut(.defaultAction)
+    static let size = NSSize(width: 760, height: 560)
+    private let secondaryText = Color(nsColor: .labelColor).opacity(0.75)
+    enum Step: Int, CaseIterable {
+        case welcome, shortcuts, privacy
+        var title: String {
+            switch self {
+            case .welcome: return "认识 ClipDock"
+            case .shortcuts: return "唤起与取用"
+            case .privacy: return "记录与隐私"
             }
         }
-        .padding(24)
-        .frame(width: 560, height: 480)
-        .background(Theme.windowBackground)
+        var symbol: String {
+            switch self {
+            case .welcome: return "rectangle.stack"
+            case .shortcuts: return "keyboard"
+            case .privacy: return "hand.raised"
+            }
+        }
     }
 
-    private func step<Accessory: View>(
-        number: Int,
-        title: String,
-        body: String,
-        done: Bool,
-        @ViewBuilder accessory: () -> Accessory
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(done ? Color.green.opacity(0.18) : Color.primary.opacity(0.06))
-                if done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.green)
-                } else {
-                    Text("\(number)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
+    @ObservedObject var prefs: Preferences
+    @ObservedObject private var hotKeys = HotKeyCenter.shared
+    var finish: () -> Void
+    @LocalState private var step: Step = .welcome
+    @LocalState private var accessibilityGranted = Paster.shared.hasAccessibility
+
+    init(prefs: Preferences, initialStep: Step = .welcome, finish: @escaping () -> Void) {
+        self.prefs = prefs
+        self.finish = finish
+        _step = LocalState(wrappedValue: initialStep)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                Group {
+                    switch step {
+                    case .welcome: welcome
+                    case .shortcuts: shortcuts
+                    case .privacy: privacy
+                    }
+                }
+                Spacer(minLength: 16)
+                Divider().padding(.bottom, 18)
+                HStack(spacing: 12) {
+                    if step != .welcome {
+                        Button("上一步") { step = Step(rawValue: step.rawValue - 1)! }
+                    }
+                    Text("第 \(step.rawValue + 1) 步，共 3 步")
+                        .font(.system(size: 12)).foregroundStyle(secondaryText)
+                    Spacer()
+                    Button(step == .privacy ? "打开剪贴板" : "继续") {
+                        if step == .privacy { complete() }
+                        else { step = Step(rawValue: step.rawValue + 1)! }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
                 }
             }
-            .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 12, weight: .semibold))
-                Text(body)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            accessory()
+            .padding(28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(.vertical, 9)
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background(Theme.windowBackground)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            accessibilityGranted = Paster.shared.hasAccessibility
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Image(nsImage: TroveBrand.appIcon()).resizable().frame(width: 64, height: 64)
+                .padding(.bottom, 12)
+            Text(AppIdentity.name).font(.system(size: 22, weight: .semibold))
+            Text("复制的内容，随时取回。")
+                .font(.system(size: 12)).foregroundStyle(secondaryText).padding(.top, 5)
+            VStack(spacing: 6) {
+                ForEach(Step.allCases, id: \.rawValue) { page in
+                    Button { step = page } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: page.symbol).frame(width: 18)
+                            Text(page.title)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.system(size: 13, weight: page == step ? .semibold : .regular))
+                        .padding(.horizontal, 10).padding(.vertical, 10)
+                        .background(page == step ? Color.accentColor.opacity(0.14) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(page == step ? "当前步骤" : "")
+                }
+            }
+            .padding(.top, 36)
+            Spacer()
+            Label("资料保存在这台 Mac", systemImage: "internaldrive")
+                .font(.system(size: 11)).foregroundStyle(secondaryText)
+                .padding(.bottom, 14)
+            Button("跳过引导，直接开始", action: complete)
+                .buttonStyle(.link).font(.system(size: 12))
+        }
+        .padding(.horizontal, 20).padding(.vertical, 28)
+        .frame(width: 190)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(.thinMaterial)
+    }
+
+    private var welcome: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("刚才复制的，\n下一次还用得到。")
+                .font(.system(size: 27, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("文字、链接、图片和文件，留在本机。需要时唤起底部浮层，就能找到之前复制的内容。")
+                .font(.system(size: 13)).foregroundStyle(secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                ForEach(Self.examples) { item in
+                    ItemCard(item: item, isSelected: false)
+                        .scaleEffect(0.57).frame(width: 132, height: 132)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .center)
+            Text("示例卡片").font(.system(size: 11)).foregroundStyle(secondaryText)
+            VStack(alignment: .leading, spacing: 10) {
+                instruction("doc.on.doc", "照常复制", "ClipDock 会记住复制过的内容。")
+                instruction("keyboard", "快捷键唤起", "直接输入搜索，方向键选择。")
+                instruction("return", "回车取用", "空格先预览，回车或双击提交。")
+            }
+        }
+    }
+
+    private var shortcuts: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("随手一按，找回内容。")
+                .font(.system(size: 25, weight: .semibold))
+            Text("在其他 App 中也能唤起。点击下方组合键，可换成你习惯的快捷键。")
+                .font(.system(size: 13)).foregroundStyle(secondaryText)
+            HStack {
+                Label("显示剪贴板", systemImage: "keyboard")
+                Spacer()
+                ShortcutRecorder(encoded: $prefs.activateShortcut).frame(width: 144, height: 28)
+                    .onChange(of: prefs.activateShortcut) { _, _ in HotKeyCenter.shared.apply(from: prefs) }
+            }
+            .font(.system(size: 13)).padding(.vertical, 6)
+            if !hotKeys.conflicts.isEmpty {
+                Label("快捷键已被占用，请重新录制；也可点击菜单栏图标打开。", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12)).foregroundStyle(.primary)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("直接粘贴到当前 App", isOn: $prefs.pasteToActiveApp)
+                    .font(.system(size: 14, weight: .medium))
+                Text("授权后，选中的内容会回贴到唤起前的 App。也可以先使用复制模式，再手动按 ⌘V。")
+                    .font(.system(size: 12)).foregroundStyle(secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Label(accessibilityGranted ? "辅助功能已授权" : "辅助功能尚未授权",
+                          systemImage: accessibilityGranted ? "checkmark.circle.fill" : "hand.raised")
+                        .font(.system(size: 12))
+                    Spacer()
+                    if !accessibilityGranted && prefs.pasteToActiveApp {
+                        Button("前往授权…") { Paster.shared.requestAccessibility() }
+                    }
+                }
+            }
+            Text("授权是可选项，稍后可在“设置 → 粘贴”中调整。")
+                .font(.system(size: 12)).foregroundStyle(secondaryText)
+        }
+    }
+
+    private var privacy: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("记录什么，由你决定。")
+                .font(.system(size: 25, weight: .semibold))
+            Text("历史保存在本机，无需账号。下面的选项都可以稍后在设置中修改。")
+                .font(.system(size: 13)).foregroundStyle(secondaryText)
+            HStack {
+                Text("保留历史条目")
+                Spacer()
+                Picker("保留历史条目", selection: $prefs.historyLimit) {
+                    ForEach([50, 100, 250, 500, 1000, 5000], id: \.self) { count in
+                        Text("\(count.formatted()) 项").tag(count)
+                    }
+                    Text("不限数量").tag(0)
+                }
+                .labelsHidden().frame(width: 140)
+            }
+            .font(.system(size: 13))
+            Text("固定条目和 Pinboard 不受历史数量限制。")
+                .font(.system(size: 12)).foregroundStyle(secondaryText)
+            Divider()
+            Toggle("登录时打开 ClipDock", isOn: $prefs.openAtLogin)
+                .font(.system(size: 13))
+            Toggle("生成链接预览", isOn: $prefs.generateLinkPreviews)
+                .font(.system(size: 13))
+            Text("链接预览会访问对应网站；启用更新检查时会访问 GitHub。隐私设置还可排除指定 App，以及标记为机密或临时的内容。")
+                .font(.system(size: 12)).foregroundStyle(secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func instruction(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol).frame(width: 18).foregroundStyle(secondaryText)
+            Text(title).fontWeight(.medium).frame(width: 78, alignment: .leading)
+            Text(detail).foregroundStyle(secondaryText)
+        }
+        .font(.system(size: 12))
+    }
+
+    private func complete() {
+        prefs.hasCompletedOnboarding = true
+        finish()
+    }
+
+    private static var examples: [ClipItem] {
+        [("设计灵感", "好想法，下一次用得到。", "com.google.Chrome"),
+         ("周末清单", "买一束花\n整理照片\n读完一本书", "com.apple.Notes"),
+         ("常用回复", "收到，谢谢！\n我会尽快回复。", "com.apple.MobileSMS")].map { title, text, bundle in
+            var item = ClipItem()
+            item.title = title
+            item.text = title + "\n" + text
+            item.sourceBundleID = bundle
+            return item
+        }
     }
 }

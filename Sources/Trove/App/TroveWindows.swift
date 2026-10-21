@@ -301,13 +301,17 @@ final class TroveWindows {
     // MARK: Onboarding
 
     func showOnboarding() {
+        hideAll()
+        if let window = onboardingWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
         let view = OnboardingView(prefs: TroveApp.shared.prefs) {
-            TroveWindows.shared.onboardingWindow?.close()
-            TroveWindows.shared.onboardingWindow = nil
-            TroveWindows.shared.showQuickPaste()
+            TroveWindows.shared.finishOnboarding()
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
+            contentRect: NSRect(origin: .zero, size: OnboardingView.size),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -318,9 +322,18 @@ final class TroveWindows {
         window.contentView = NSHostingView(rootView: view)
         window.center()
         window.isReleasedWhenClosed = false
+        window.delegate = WindowDelegateKeeper.shared
         onboardingWindow = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func finishOnboarding() {
+        TroveApp.shared.prefs.hasCompletedOnboarding = true
+        onboardingWindow?.delegate = nil
+        onboardingWindow?.close()
+        onboardingWindow = nil
+        showQuickPaste()
     }
 
     // MARK: Keyboard
@@ -481,10 +494,15 @@ final class QuickPanel: NSPanel {
 
 // MARK: - Delegates
 
+@MainActor
 final class WindowDelegateKeeper: NSObject, NSWindowDelegate {
     static let shared = WindowDelegateKeeper()
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender === TroveWindows.shared.onboardingWindow {
+            TroveWindows.shared.finishOnboarding()
+            return false
+        }
         sender.orderOut(nil)
         return false
     }

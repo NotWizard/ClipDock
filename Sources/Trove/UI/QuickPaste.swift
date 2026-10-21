@@ -251,6 +251,12 @@ struct QuickPasteView: View {
             .onChange(of: model.destination) { _, _ in
                 if let id = model.items.first?.id { proxy.scrollTo(id, anchor: .leading) }
             }
+            .onChange(of: model.items.map(\.id)) { _, _ in
+                if let id = model.current?.id { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onChange(of: model.searchFocusRequest) { _, _ in
+                if !model.isSearching, let id = model.current?.id { proxy.scrollTo(id, anchor: .leading) }
+            }
         }
     }
 
@@ -366,10 +372,13 @@ private struct PanelSearchField: NSViewRepresentable {
         field.sendsWholeSearchString = false
         field.setAccessibilityLabel("搜索剪贴板")
         (field.cell as? NSSearchFieldCell)?.cancelButtonCell = nil
-        field.expand = { model.isSearching = true }
+        (field.cell as? NSSearchFieldCell)?.searchButtonCell?.target = context.coordinator
+        (field.cell as? NSSearchFieldCell)?.searchButtonCell?.action = #selector(Coordinator.beginSearch)
+        field.expand = { context.coordinator.beginSearch() }
         return field
     }
     func updateNSView(_ field: SearchField, context: Context) {
+        field.isSearching = model.isSearching
         let composing = (field.currentEditor() as? NSTextView)?.hasMarkedText() ?? false
         if !composing && context.coordinator.lastQuery != model.query {
             context.coordinator.lastQuery = model.query
@@ -388,13 +397,27 @@ private struct PanelSearchField: NSViewRepresentable {
     }
     final class SearchField: NSSearchField {
         var expand: (() -> Void)?
-        override func mouseDown(with event: NSEvent) { expand?(); super.mouseDown(with: event) }
+        var isSearching = false
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            if !isSearching {
+                // Do not enter native cell tracking while SwiftUI is resizing the control.
+                expand?()
+                return
+            }
+            super.mouseDown(with: event)
+        }
     }
+    @MainActor
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         let model: MainViewModel
         var focusRequest = -1
         var lastQuery = ""
         init(model: MainViewModel) { self.model = model }
+        @objc func beginSearch() {
+            model.isSearching = true
+            model.searchFocusRequest += 1
+        }
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSSearchField else { return }
             let value = (field.currentEditor() as? NSTextView)?.string ?? field.stringValue

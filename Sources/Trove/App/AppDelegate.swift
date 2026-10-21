@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let updates = NSMenuItem(title: "检查更新…", action: #selector(checkUpdates), keyEquivalent: "")
         updates.target = self
         appMenu.addItem(updates)
+        let guide = NSMenuItem(title: "使用指南…", action: #selector(openGuide), keyEquivalent: "")
+        guide.target = self
+        appMenu.addItem(guide)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "隐藏 \(AppIdentity.name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         appMenu.addItem(NSMenuItem(title: "退出 \(AppIdentity.name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -73,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor @objc private func openSettings() { TroveWindows.shared.showSettings() }
+    @MainActor @objc private func openGuide() { TroveWindows.shared.showOnboarding() }
     @MainActor @objc private func checkUpdates() {
         TroveWindows.shared.showSettings(about: true)
         Task { await UpdateChecker.shared.check() }

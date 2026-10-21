@@ -171,6 +171,39 @@ enum SelfTest {
                   String(describing: restored?.size))
         }
 
+        // Successful clipboard writes promote history across every paste/copy route.
+        let usageItems = (0..<3).map { index -> ClipItem in
+            var item = ClipItem()
+            item.title = "usage-\(index)"
+            item.text = item.title
+            item.checksum = "\(marker)-usage-\(index)"
+            item.createdAt = Date().addingTimeInterval(Double(-600 - index * 60))
+            store.insert(item)
+            created.append(item.id)
+            return item
+        }
+        let countBeforeUse = store.totalCount
+        _ = Paster.shared.write(items: [usageItems[2]], store: store, pasteboard: pb)
+        check("using an older history item promotes the existing entry", store.items.first?.id == usageItems[2].id && store.totalCount == countBeforeUse)
+        _ = Paster.shared.write(items: [usageItems[1], usageItems[0]], store: store, pasteboard: pb)
+        check("batch use preserves the selected order at the front", Array(store.items.prefix(2).map(\.id)) == [usageItems[1].id, usageItems[0].id])
+        let orderBeforeFailure = store.items.map(\.id)
+        var unusable = usageItems[2]
+        unusable.text = nil
+        check("failed clipboard write does not change history order", !Paster.shared.write(items: [unusable], store: store, pasteboard: pb) && store.items.map(\.id) == orderBeforeFailure)
+        store.save(immediately: true)
+        let manifest = (try? Data(contentsOf: Store.root.appendingPathComponent("library.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let savedItems = manifest?["items"] as? [[String: Any]]
+        check("recently used order is persisted", savedItems?.prefix(2).compactMap { $0["id"] as? String } == [usageItems[1].id.uuidString, usageItems[0].id.uuidString])
+        for item in usageItems.prefix(2) { store.setPinboard(item.id, to: board.id) }
+        let boardOrder = store.items(in: board.id, query: "", kind: nil, bundleID: nil, since: nil).map(\.id)
+        if let boardItem = store.items.first(where: { $0.id == usageItems[1].id }) {
+            _ = Paster.shared.write(items: [boardItem], store: store, pasteboard: pb)
+            check("using a Pinboard item keeps its manual order", store.items(in: board.id, query: "", kind: nil, bundleID: nil, since: nil).map(\.id) == boardOrder)
+        }
+        for item in usageItems { store.setPinboard(item.id, to: nil) }
+
         // Shared panel state, default keys, reordering and real drag representations.
         let model = MainViewModel(store: store, prefs: .shared)
         model.preparePanel()
@@ -343,6 +376,19 @@ enum SelfTest {
             check("native panel is anchored to available screen bottom", panel.frame == TroveWindows.clipboardPanelFrame(in: screen.visibleFrame))
         } else { check("native panel has a display", false) }
         check("native search field owns keyboard input", panel.firstResponder is NSTextView)
+        func searchField(in view: NSView?) -> NSSearchField? {
+            guard let view else { return nil }
+            return (view as? NSSearchField) ?? view.subviews.lazy.compactMap { searchField(in: $0) }.first
+        }
+        if let field = searchField(in: panel.contentView),
+           let button = (field.cell as? NSSearchFieldCell)?.searchButtonCell, let action = button.action {
+            _ = NSApp.sendAction(action, to: button.target, from: field)
+            pump()
+            check("search icon's native action expands search on first press", model.isSearching && field.frame.width > 300)
+            check("search icon immediately focuses the existing editor", field.currentEditor() === panel.firstResponder)
+            model.preparePanel()
+            pump()
+        } else { check("search icon has a native action", false) }
         if let editor = panel.firstResponder as? NSTextView {
             editor.insertText("TROVE_UI_AUDIT", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
             pump()
@@ -401,6 +447,19 @@ enum SelfTest {
         windows.showQuickPaste()
         pump()
         check("reopening cancels stale dismissals", panel.isVisible && panel.alphaValue == 1)
+        let pasteboard = NSPasteboard.withUniqueName()
+        if let older = store.items.first(where: { $0.id == fixtureIDs[2] }) {
+            model.selection = [older.id]
+            _ = Paster.shared.write(items: [older], store: store, pasteboard: pasteboard)
+            pump()
+            check("using an older card promotes it without changing selection", model.items.first?.id == older.id && model.current?.id == older.id)
+            windows.closeQuickPaste(restoreTarget: false)
+            pump()
+            windows.showQuickPaste()
+            pump()
+            check("reopened panel starts with the recently used card", model.items.first?.id == older.id && model.current?.id == older.id)
+        }
+        pasteboard.releaseGlobally()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         capture(panel, to: directory.appendingPathComponent("panel-native.png"))
         let geometry: [String: Any] = ["frame": NSStringFromRect(panel.frame), "keyWindow": panel.isKeyWindow,
@@ -409,6 +468,17 @@ enum SelfTest {
         if let data = try? JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("panel-check.json"))
         }
+        let shortcut = prefs.activateShortcut
+        windows.showOnboarding()
+        pump()
+        let guide = windows.onboardingWindow
+        check("onboarding has its own visible native window", guide?.isVisible == true && guide?.contentView?.bounds.width == OnboardingView.size.width && (guide?.contentView?.bounds.height ?? 0) >= OnboardingView.size.height)
+        windows.showOnboarding()
+        check("reopening onboarding reuses its existing window", windows.onboardingWindow === guide)
+        check("opening onboarding preserves existing preferences", prefs.activateShortcut == shortcut && !prefs.pasteToActiveApp)
+        guide?.performClose(nil)
+        pump()
+        check("closing onboarding completes it and opens clipboard", prefs.hasCompletedOnboarding && windows.onboardingWindow == nil && panel.isVisible)
         windows.hideAll()
         print(failures == 0 ? "PANEL CHECK OK" : "PANEL CHECK FAILURES: \(failures)")
         return failures == 0 ? 0 : 1
@@ -578,9 +648,10 @@ enum SelfTest {
         case "update":
             size = CGSize(width: 440, height: 370)
             view = AnyView(UpdatePrompt(updates: .shared, close: {}))
-        case "onboarding":
-            size = CGSize(width: 560, height: 480)
-            view = AnyView(OnboardingView(prefs: prefs, finish: {}))
+        case "onboarding", "onboarding-keys", "onboarding-privacy":
+            size = OnboardingView.size
+            let step: OnboardingView.Step = name == "onboarding-keys" ? .shortcuts : (name == "onboarding-privacy" ? .privacy : .welcome)
+            view = AnyView(OnboardingView(prefs: prefs, initialStep: step, finish: {}))
         case "stack":
             size = CGSize(width: 480, height: 380)
             view = AnyView(PasteStackView(model: PasteStackModel(store: store), store: store, close: {}))

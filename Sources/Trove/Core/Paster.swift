@@ -87,6 +87,9 @@ final class Paster {
         if pasteboard.name == NSPasteboard.general.name, NSApp?.delegate is AppDelegate {
             TroveApp.shared.monitor.suppressNextChange()
         }
+        // Every successful copy/paste route shares this writer, including the clipboard-only fallback.
+        // Reverse the batch so the first selected item remains first; keep manual Pinboard order.
+        for clip in items.reversed() where clip.pinboardID == nil { store.moveToTop(clip.id) }
         return true
     }
 
