@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+build/
+.DS_Store
+*.xcuserstate
+
+# Local reverse-engineering evidence and personal clipboard screenshots.
+docs/*
+!docs/public/
