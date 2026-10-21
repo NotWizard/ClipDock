@@ -554,8 +554,9 @@ struct SidebarView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.down.circle.fill").font(.system(size: 20))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("有可用更新").font(.system(size: 12, weight: .semibold))
-                            Text("\(release.tagName) · 查看并下载").font(.system(size: 11))
+                            Text(updates.installState == .ready ? "更新已就绪" : "有可用更新").font(.system(size: 12, weight: .semibold))
+                            Text(updates.installationInProgress ? updates.status : "\(release.tagName) · 查看并下载")
+                                .font(.system(size: 11)).lineLimit(1)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right").font(.system(size: 10))
@@ -563,7 +564,7 @@ struct SidebarView: View {
                     .padding(10).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain).padding(10)
-                .accessibilityLabel("有可用更新 \(release.tagName)，查看并下载")
+                .accessibilityLabel("ClipDock 更新 \(release.tagName)，\(updates.installationInProgress ? updates.status : "查看并下载")")
             }
             Divider()
             HStack(spacing: 8) {

@@ -497,7 +497,7 @@ struct SettingsView: View {
                 }
                 Spacer()
                 if updates.isChecking { ProgressView().controlSize(.small).accessibilityLabel("正在检查更新") }
-                Button(updates.isChecking ? "检查中…" : "检查更新") {
+                Button(updates.installationInProgress ? "查看更新" : (updates.isChecking ? "检查中…" : "检查更新")) {
                     Task { await updates.check() }
                 }
                 .disabled(updates.isChecking || updates.repository == nil)
@@ -507,13 +507,22 @@ struct SettingsView: View {
                     Label("\(release.tagName) 可用", systemImage: "arrow.down.circle.fill")
                         .font(.system(size: 12, weight: .medium))
                     Spacer()
-                    Button("前往下载") { updates.openDownload() }
+                    Button(updates.canPerformUpdateAction ? updates.updateActionTitle : "查看进度") {
+                        updates.showAvailableUpdate()
+                        if updates.canPerformUpdateAction { updates.performUpdateAction() }
+                    }
                 }
                 .padding(10).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 8))
+                if updates.installState == .downloading {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if let progress = updates.downloadProgress { ProgressView(value: progress) }
+                        Text(updates.transferDescription).font(.system(size: 11)).monospacedDigit()
+                    }
+                }
             }
             Toggle("每 24 小时自动检查更新", isOn: $prefs.automaticallyChecksForUpdates)
                 .font(.system(size: 12))
-            Text("发现新版本时提醒；下载后由你安装。")
+            Text("发现新版本时提醒；在 App 内下载、校验并安装重启。")
                 .font(.system(size: 11)).foregroundStyle(.primary.opacity(0.72))
             HStack(spacing: 8) {
                 TextField("GitHub 仓库：owner/repository", text: $repositoryDraft)
@@ -528,6 +537,7 @@ struct SettingsView: View {
                 }
                 .disabled(repositoryDraft == prefs.updateRepository)
             }
+            .disabled(updates.installationInProgress)
             if let repositoryError {
                 Text(repositoryError).font(.system(size: 11)).foregroundStyle(.red)
             }

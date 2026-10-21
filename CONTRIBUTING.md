@@ -4,7 +4,7 @@
 
 ## 本地构建
 
-需要 macOS 14 或更新版本、Apple Command Line Tools，以及 Swift 5.9 或更新版本。项目仅使用 Apple 框架，无第三方包依赖。
+需要 macOS 14 或更新版本、Apple Command Line Tools，以及 Swift 5.9 或更新版本。应用界面使用 Apple 原生框架；更新安装依赖 Sparkle 2.10.0，由 Swift Package Manager 按固定版本和校验值获取。第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ```bash
 git clone https://github.com/NotWizard/ClipDock.git
@@ -53,6 +53,16 @@ open build/ClipDock.app
 
 核心检查 45 项、更新检查 33 项、原生面板检查 30 项通过。覆盖搜索图标首次操作、现有编辑器焦点、输入法组合状态、成功取用后的排序及持久化、批量顺序、失败写入、Pinboard 手动顺序，以及指南的窗口复用、偏好保留和关闭行为。实机从文本编辑用全局快捷键唤起后，单击搜索图标即可立即输入并筛选；指南三步均检查了原生深浅色渲染。
 
+### 1.2.3 的更新安装验证
+
+核心检查 45 项、更新检查 43 项通过。更新检查新增实际字节进度、长度溢出、取消后重试、校验阶段不可取消、安装确认和重复触发保护。原生面板检查需要已解锁的桌面：本次锁屏执行为 26 项通过、4 项桌面焦点或动画检查未通过，与 1.2.2 对照结果一致，等待解锁复验；失败时命令现在会正确返回非零状态。
+
+```bash
+python3 Scripts/check-updater.py /tmp/clipdock-updater-check
+```
+
+此脚本使用临时签名密钥和 `app.trove.updater-test.*` 的临时应用，测试被篡改的更新信息、损坏的安装包、真实下载取消，以及真实替换与重新启动。它比较更新前后的合成条目、Pinboard、快捷键与保留数量，并核对安装后的可执行文件。整个过程不会更新“应用程序”中的安装版，也不会访问个人资料库；临时测试旧版包含新更新器，不能称为已发布的 1.2.2。
+
 ## 演示与截图
 
 公开图片使用合成演示内容，不使用个人剪贴板历史。演示模式会建立独立的临时资料库；`--demo-update` 中的未来版本仅用于展示提醒。
@@ -66,6 +76,9 @@ open build/ClipDock.app
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot main /tmp/clipdock-manager.png --appearance light --demo-update
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot about /tmp/clipdock-about.png --appearance light --demo-update
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot update /tmp/clipdock-update.png --appearance light --demo-update
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot update-downloading /tmp/clipdock-download.png --appearance light --demo-update
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot update-ready /tmp/clipdock-ready.png --appearance dark --demo-update
+./build/ClipDock.app/Contents/MacOS/Trove --snapshot update-error /tmp/clipdock-error.png --appearance dark --demo-update
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding /tmp/clipdock-guide.png --appearance light --demo
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding-keys /tmp/clipdock-guide-keys.png --appearance light --demo
 ./build/ClipDock.app/Contents/MacOS/Trove --snapshot onboarding-privacy /tmp/clipdock-guide-privacy.png --appearance dark --demo
@@ -83,8 +96,21 @@ open build/ClipDock.app
 ## 发布新版
 
 1. 更新 `Resources/Info.plist` 中的版本号与 build。Fork 后作为独立发行时，修改 `GitHubRepository` 为自己的 `owner/repository`。
-2. 构建并运行相关检查，补齐本次修改涉及的人工验收。执行 `./Scripts/package-release.sh` 生成 ZIP 与 SHA-256 文件。
-3. 创建与版本一致的 tag，例如 `v1.3.0`，发布正式 GitHub Release，附上 `build/` 中生成的 ZIP 与校验文件。打包脚本使用当前主机架构，不执行通用二进制交叉构建。
-4. 下载已发布的文件，核对 SHA-256、解压与版本信息，再验证旧版本客户端的更新发现流程。
+2. 构建并运行相关检查及安装集成脚本，补齐本次修改涉及的人工验收。设置更新签名私钥路径后，执行 `./Scripts/package-release.sh` 生成 ZIP、SHA-256 和已签名的 `appcast.xml`。
+3. 创建与版本一致的 tag，例如 `v1.3.0`，发布正式 GitHub Release，附上 `build/` 中生成的 ZIP、校验文件和 `appcast.xml`。打包脚本使用当前主机架构，不执行通用二进制交叉构建。
+4. 下载已发布的文件，核对 SHA-256、更新信息与安装包签名、解压与版本信息，再验证带更新器的旧版测试客户端的下载、替换与重启流程。
 
-客户端读取 [GitHub Latest Release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)，校验版本与仓库地址。更新是检查、提醒并打开下载页面，不包含应用内自动替换。Developer ID 签名与公证须在正式分发流程中另行完成。
+客户端通过 [GitHub Latest Release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release) 发现版本，安装时从正式 Release 的 `appcast.xml` 获取经过签名的更新信息。Sparkle 在解压前校验安装包，再负责替换与重启。
+
+### 更新签名
+
+`Resources/Info.plist` 中的 `SUPublicEDKey` 是公开的 Ed25519 公钥。对应私钥必须保存在仓库之外并安全备份，不能提交、放进安装包或写入日志。
+
+```bash
+export CLIPDOCK_UPDATE_KEY_FILE="/你的安全目录/ed25519-private-key"
+./Scripts/package-release.sh
+```
+
+私钥文件使用 Sparkle 支持的 Base64 密钥格式；可用 Sparkle 的 `generate_keys` 工具管理密钥，参见[官方签名指南](https://sparkle-project.org/documentation/)。本机默认路径是 `~/Library/Application Support/ClipDock Release Signing/ed25519-private-key`。打包脚本缺少私钥时会停止；已签名的更新信息后续修改需要重新签名。
+
+Fork 的独立发行必须生成自己的密钥，同时更新 `SUPublicEDKey`、`SUFeedURL` 和 `GitHubRepository`。原项目用户仅信任原项目密钥；不要把同一公钥误用于无法取得私钥的 Fork。Ed25519 更新签名与 Apple Developer ID 签名用途不同，Developer ID 签名和公证仍需另行完成。

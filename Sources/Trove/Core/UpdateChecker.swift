@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import Sparkle
 
 enum AppIdentity {
     static var name: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "ClipDock" }
@@ -23,6 +24,7 @@ struct GitHubRepository: Equatable {
     }
     var apiURL: URL { URL(string: "https://api.github.com/repos/\(slug)/releases/latest")! }
     var releasesURL: URL { URL(string: "https://github.com/\(slug)/releases")! }
+    var appcastURL: URL { releasesURL.appendingPathComponent("latest/download/appcast.xml") }
 
     func containsReleaseURL(_ url: URL) -> Bool {
         let path = url.pathComponents
@@ -75,7 +77,7 @@ struct AppRelease: Codable, Equatable {
 }
 
 @MainActor
-final class UpdateChecker: ObservableObject {
+final class UpdateChecker: NSObject, ObservableObject {
     static let shared = UpdateChecker()
     static let interval: TimeInterval = 24 * 60 * 60
 
@@ -83,6 +85,13 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var available: AppRelease?
     @Published private(set) var status = "可检查新版本"
     @Published private(set) var lastError: String?
+    enum InstallState: String {
+        case idle, checking, downloading, cancelling, preparing, ready, installing, failed
+    }
+    @Published private(set) var installState: InstallState = .idle
+    @Published private(set) var downloadedBytes: UInt64 = 0
+    @Published private(set) var expectedBytes: UInt64 = 0
+    private(set) var installationError: NSError?
     var onUpdateAvailable: ((AppRelease) -> Void)?
 
     private let prefs: Preferences
@@ -92,16 +101,50 @@ final class UpdateChecker: ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var generation = 0
+    private let hostBundle: Bundle
+    private let testFeedURL: URL?
+    private var installer: SPUUpdater?
+    private var installerRepository: GitHubRepository?
+    private var cancelTransfer: (() -> Void)?
+    private var installReply: ((SPUUserUpdateChoice) -> Void)?
+
+    var installationInProgress: Bool { ![.idle, .failed].contains(installState) }
+    var canCancelDownload: Bool { cancelTransfer != nil }
+    var downloadProgress: Double? {
+        expectedBytes == 0 ? nil : min(1, Double(downloadedBytes) / Double(expectedBytes))
+    }
+    var transferDescription: String {
+        let downloaded = ByteCountFormatter.string(fromByteCount: Int64(clamping: downloadedBytes), countStyle: .file)
+        guard expectedBytes > 0 else { return "已下载 \(downloaded)" }
+        return "\(downloaded) / \(ByteCountFormatter.string(fromByteCount: Int64(clamping: expectedBytes), countStyle: .file))"
+    }
+    var updateActionTitle: String {
+        switch installState {
+        case .ready: return "安装并重启"
+        case .checking: return "正在准备…"
+        case .downloading: return "正在下载…"
+        case .cancelling: return "正在取消…"
+        case .preparing: return "正在校验…"
+        case .installing: return "正在安装…"
+        case .failed: return "重试下载"
+        case .idle: return "下载更新"
+        }
+    }
+    var canPerformUpdateAction: Bool { available != nil && !isChecking && [.idle, .failed, .ready].contains(installState) }
 
     private struct CachedRelease: Codable {
         let repository: String
         let release: AppRelease
     }
 
-    init(prefs: Preferences? = nil, session: URLSession = .shared, currentVersion: String = Bundle.main.shortVersion) {
+    init(prefs: Preferences? = nil, session: URLSession = .shared, currentVersion: String = Bundle.main.shortVersion,
+         hostBundle: Bundle = .main, testFeedURL: URL? = nil) {
         self.prefs = prefs ?? .shared
         self.session = session
         self.currentVersion = currentVersion
+        self.hostBundle = hostBundle
+        self.testFeedURL = testFeedURL
+        super.init()
         restoreCachedRelease()
     }
 
@@ -129,6 +172,10 @@ final class UpdateChecker: ObservableObject {
     }
 
     func check(manual: Bool = true, now: Date = Date()) async {
+        if installationInProgress {
+            if manual { showAvailableUpdate() }
+            return
+        }
         guard !isChecking else { return }
         guard let repository else {
             status = "请先设置 GitHub 更新仓库"
@@ -194,9 +241,64 @@ final class UpdateChecker: ObservableObject {
         if let available { onUpdateAvailable?(available) }
     }
 
-    func openDownload() {
-        guard let available, repository?.containsReleaseURL(available.htmlURL) == true else { return }
-        NSWorkspace.shared.open(available.htmlURL)
+    func performUpdateAction() {
+        if installState == .ready {
+            guard let reply = installReply else { return }
+            installReply = nil
+            Store.shared.save(immediately: true)
+            installState = .installing
+            status = "正在安装并重启…"
+            reply(.install)
+        } else { downloadUpdate() }
+    }
+
+    func downloadUpdate() {
+        guard !isChecking, !installationInProgress, let available, let repository,
+              repository.containsReleaseURL(available.htmlURL) else { return }
+        lastError = nil
+        installationError = nil
+        downloadedBytes = 0
+        expectedBytes = 0
+        installerRepository = repository
+        do {
+            if installer == nil {
+                let updater = SPUUpdater(hostBundle: hostBundle, applicationBundle: hostBundle, userDriver: self, delegate: self)
+                try updater.start()
+                // ClipDock owns the persisted 24-hour schedule; only this explicit action downloads.
+                updater.automaticallyChecksForUpdates = false
+                updater.automaticallyDownloadsUpdates = false
+                updater.sendsSystemProfile = false
+                installer = updater
+            }
+            guard installer?.canCheckForUpdates == true else { return }
+            installState = .checking
+            status = "正在获取签名更新信息…"
+            installer?.checkForUpdates()
+        } catch { installationFailed(error) }
+    }
+
+    func cancelDownload() {
+        guard let cancel = cancelTransfer else { return }
+        cancelTransfer = nil
+        installState = .cancelling
+        status = "正在取消下载…"
+        cancel()
+    }
+
+    private func installationFailed(_ error: Error) {
+        installationError = error as NSError
+        installState = .failed
+        cancelTransfer = nil
+        installReply = nil
+        var cause: NSError? = error as NSError
+        var invalidSignature = false
+        while let current = cause {
+            if current.domain == SUSparkleErrorDomain, [3001, 3002].contains(current.code) { invalidSignature = true }
+            cause = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        lastError = invalidSignature ? "更新信息或安装包未通过签名校验，请重新检查更新。"
+            : (error as? UpdateFailure)?.message ?? "更新未完成，请检查网络或安装权限后重试。"
+        status = lastError!
     }
 
     private func repositoryChanged() {
@@ -225,7 +327,7 @@ final class UpdateChecker: ObservableObject {
 
     private func schedule() {
         timer?.invalidate()
-        guard prefs.automaticallyChecksForUpdates, repository != nil, !isChecking else { return }
+        guard prefs.automaticallyChecksForUpdates, repository != nil, !isChecking, !installationInProgress else { return }
         let now = Date()
         let due = Self.isDue(lastCheck: prefs.lastUpdateCheck, automatic: true, now: now)
             ? now : (prefs.lastUpdateCheck ?? now).addingTimeInterval(Self.interval)
@@ -233,6 +335,105 @@ final class UpdateChecker: ObservableObject {
             Task { @MainActor in await self?.checkIfDue() }
         }
         timer?.tolerance = 60
+    }
+}
+
+// Sparkle owns downloading, signature verification, extraction, replacement and relaunch.
+// This driver only connects its lifecycle to ClipDock's existing native surfaces.
+extension UpdateChecker: SPUUserDriver, SPUUpdaterDelegate {
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        (testFeedURL ?? installerRepository?.appcastURL)?.absoluteString
+    }
+
+    func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
+        reply(SUUpdatePermissionResponse(automaticUpdateChecks: false, sendSystemProfile: false))
+    }
+
+    func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
+        cancelTransfer = cancellation
+    }
+
+    func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        guard !appcastItem.isInformationOnlyUpdate,
+              let offered = ReleaseVersion(appcastItem.displayVersionString), offered.prerelease.isEmpty,
+              let selected = available.flatMap({ ReleaseVersion($0.tagName) }), offered == selected else {
+            installationFailed(UpdateFailure("更新包与所选版本不一致，请重新检查更新。"))
+            reply(.dismiss)
+            return
+        }
+        // The user already chose Download in ClipDock; a second confirmation is unnecessary.
+        // A previously staged installer must still wait for explicit install consent.
+        if state.stage == .installing {
+            showReady(toInstallAndRelaunch: reply)
+        } else { reply(.install) }
+    }
+
+    func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
+    func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {}
+
+    func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
+        installationFailed(error)
+        acknowledgement()
+    }
+
+    func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
+        installationFailed(error)
+        acknowledgement()
+    }
+
+    func showDownloadInitiated(cancellation: @escaping () -> Void) {
+        cancelTransfer = cancellation
+        installState = .downloading
+        status = "正在下载更新…"
+    }
+
+    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
+        expectedBytes = expectedContentLength
+    }
+
+    func showDownloadDidReceiveData(ofLength length: UInt64) {
+        let sum = downloadedBytes.addingReportingOverflow(length)
+        downloadedBytes = sum.overflow ? .max : sum.partialValue
+    }
+
+    func showDownloadDidStartExtractingUpdate() {
+        cancelTransfer = nil
+        installState = .preparing
+        status = "正在校验并准备安装…"
+    }
+
+    func showExtractionReceivedProgress(_ progress: Double) {}
+
+    func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        cancelTransfer = nil
+        installReply = reply
+        installState = .ready
+        status = "更新已就绪，可以安装并重启"
+        showAvailableUpdate()
+    }
+
+    func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
+        installState = .installing
+        status = "正在安装并重启…"
+    }
+
+    func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
+        status = relaunched ? "更新完成，已重新打开" : "更新安装完成"
+        acknowledgement()
+    }
+
+    func dismissUpdateInstallation() {
+        cancelTransfer = nil
+        installReply = nil
+        if installState == .cancelling { status = "下载已取消，可以稍后重试" }
+        if installState != .failed { installState = .idle }
+        schedule()
+    }
+
+    func showUpdateInFocus() { showAvailableUpdate() }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        Store.shared.save(immediately: true)
     }
 }
 

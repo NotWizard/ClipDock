@@ -7,3 +7,7 @@ build/
 # Local reverse-engineering evidence and personal clipboard screenshots.
 docs/*
 !docs/public/
+
+# Update signing secrets stay outside the checkout.
+*-private-key
+*.ed25519

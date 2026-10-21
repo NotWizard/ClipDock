@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.2</string>
+	<string>1.2.3</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -38,5 +38,17 @@
 	<string>ClipDock — your clipboard, within reach</string>
 	<key>GitHubRepository</key>
 	<string>NotWizard/ClipDock</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/NotWizard/ClipDock/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>qUxXjrQaYv3VH8NMMds2y6V3UQTKUCTQ8209n+LOK1o=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
 </dict>
 </plist>

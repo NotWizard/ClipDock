@@ -125,9 +125,9 @@
 
 ![管理窗口：历史卡片、常用片段 Pinboard 与左下角更新入口](docs/public/manager-update.png)
 
-### 发现新版，先看说明再下载
+### 发现新版，直接在 App 内更新
 
-“设置 → 关于”提供手动检查和每 24 小时自动检查。发现新版本后，打开小窗查看更新说明，再前往 GitHub 下载。
+“设置 → 关于”提供手动检查和每 24 小时自动检查。发现新版本后，在更新小窗直接下载，查看进度或取消；校验通过后点击“安装并重启”。历史记录与偏好会保留。
 
 <table>
   <tr>
@@ -135,21 +135,33 @@
     <th>更新提醒 · 说明与下载</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/public/about-updates.png" alt="关于页中的检查更新按钮、自动检查开关和下载入口" width="680"></td>
-    <td valign="top"><img src="docs/public/update-prompt.png" alt="更新小窗中的版本变化、更新说明、暂不更新与前往下载按钮" width="440"></td>
+    <td valign="top"><img src="docs/public/about-updates.png" alt="关于页中的检查更新按钮、自动检查开关和应用内下载入口" width="680"></td>
+    <td valign="top"><img src="docs/public/update-prompt.png" alt="更新小窗中的版本变化、更新说明和下载更新按钮" width="440"></td>
   </tr>
 </table>
 
-<sub>以上界面使用隔离的合成资料库；v1.3.0 为更新提醒的演示版本，不代表已发布。实际版本以 <a href="https://github.com/NotWizard/ClipDock/releases/latest">Releases</a> 为准。面板浅色、深色及设置图由真实原生视图渲染，实拍图来自运行中的演示窗口。</sub>
+<table>
+  <tr><th>下载中 · 进度与取消</th><th>校验完成 · 安装并重启</th></tr>
+  <tr>
+    <td valign="top"><img src="docs/public/update-downloading.png" alt="应用内更新下载进度、已下载字节与取消下载按钮；合成演示进度" width="440"></td>
+    <td valign="top"><img src="docs/public/update-ready.png" alt="更新准备就绪后的安装并重启按钮，以及稍后退出时安装的说明" width="440"></td>
+  </tr>
+</table>
+
+<sub>以上界面使用隔离的合成资料库；v1.3.0 和下载进度均为演示，不代表已发布版本或实际下载。实际版本以 <a href="https://github.com/NotWizard/ClipDock/releases/latest">Releases</a> 为准。面板浅色、深色及设置图由真实原生视图渲染，实拍图来自运行中的演示窗口。</sub>
 
 ## 更新方式
 
 - **手动检查：** 打开“设置 → 关于 → 检查更新”。
 - **自动提醒：** 默认每 24 小时检查一次。应用运行时执行，记住上次检查时间；睡眠唤醒后补查到期任务。同一新版只自动弹窗一次。
-- **稍后处理：** 关闭提醒后，管理窗口左下角的“有可用更新”仍可打开下载入口。
-- **下载并安装：** 按“前往下载”打开本仓库的正式 Release，下载 ZIP，退出 ClipDock 后用新版替换“应用程序”中的旧版。
+- **稍后处理：** 关闭提醒后，管理窗口左下角仍可重新打开更新窗口。
+- **下载更新：** 在 App 内下载正式更新包，显示实际字节进度；下载阶段可取消，也可收起窗口继续工作。
+- **校验与安装：** 更新信息和安装包均通过 Ed25519 签名校验后，提供“安装并重启”。准备就绪后选择稍后查看，正常退出 App 时也会完成安装。
+- **稍后返回：** 从“关于”或管理窗口左下角重新打开，可查看同一个下载或安装状态。
 
-更新检查无需 GitHub 账号或 Token，忽略草稿和预发布版本。**目前是自动检查与提醒，安装由你完成。** 退出应用期间不会在后台执行检查。
+更新检查无需 GitHub 账号或 Token，忽略草稿和预发布版本。下载、签名校验、替换和重启由 [Sparkle 2](https://sparkle-project.org/) 完成；失败时显示重试入口。退出应用期间不会在后台执行检查。
+
+**首次过渡：** 1.2.2 及更早版本只有网页下载入口，需要手动安装一次 1.2.3 或更新版本，之后即可使用应用内更新。GitHub Releases 仍提供完整 ZIP，便于首次安装。
 
 ## 数据与隐私
 
@@ -184,4 +196,4 @@
 
 ## 开源与许可
 
-ClipDock 使用 [MIT License](LICENSE)，可免费使用、修改和分发。它是独立实现，不附带其他剪贴板产品的代码、图标或商业服务。
+ClipDock 使用 [MIT License](LICENSE)，可免费使用、修改和分发。Sparkle 及其包含的组件许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。它是独立实现，不附带其他剪贴板产品的代码、图标或商业服务。

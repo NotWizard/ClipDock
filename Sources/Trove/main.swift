@@ -19,7 +19,7 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
     init(directory: URL) { self.directory = directory }
     func applicationDidFinishLaunching(_ notification: Notification) {
         status = MainActor.assumeIsolated { SelfTest.checkPanel(to: directory) }
-        NSApp.terminate(nil)
+        NSApp.stop(nil)
     }
 }
 
@@ -32,6 +32,36 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
 //   Trove --render-previews DIR render every screen to PNG and exit
 
 let arguments = CommandLine.arguments
+
+if Bundle.main.bundleIdentifier?.hasPrefix("app.trove.updater-test.") == true,
+   let probePath = Bundle.main.object(forInfoDictionaryKey: "ClipDockUpdaterProbeDirectory") as? String {
+    let directory = URL(fileURLWithPath: probePath).resolvingSymlinksInPath()
+    guard directory.path.hasPrefix(FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path + "/") else { exit(1) }
+    setenv("TROVE_TEST_DATA_DIR", directory.path, 1)
+    let app = NSApplication.shared
+    let delegate = UpdateProbeDelegate(directory: directory)
+    app.delegate = delegate
+    app.setActivationPolicy(.prohibited)
+    app.run()
+    exit(0)
+}
+
+if let index = arguments.firstIndex(of: "--check-installer"), arguments.count > index + 3,
+   let feedURL = URL(string: arguments[index + 2]) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-installercheck-\(UUID().uuidString)")
+    setenv("TROVE_TEST_DATA_DIR", root.path, 1)
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let status = MainActor.assumeIsolated { () -> Int32 in
+        var status: Int32?
+        Task { status = await UpdateChecks.checkInstallation(hostURL: URL(fileURLWithPath: arguments[index + 1]), feedURL: feedURL, expectedExecutable: URL(fileURLWithPath: arguments[index + 3]), expectRejection: arguments.contains("--expect-rejection"), cancelDownload: arguments.contains("--cancel-download")) }
+        while status == nil { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
+        return status!
+    }
+    try? FileManager.default.removeItem(at: root)
+    UserDefaults.standard.removePersistentDomain(forName: "app.trove.test.\(root.lastPathComponent)")
+    exit(status)
+}
 
 if arguments.contains("--check-updates") {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-updatecheck-\(UUID().uuidString)")

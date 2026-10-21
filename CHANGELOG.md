@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.3
+
+- Download updates inside ClipDock with byte progress and cancellation, using Sparkle 2.10.0.
+- Verify Ed25519-signed update feeds and archives before extraction, then offer Install and Relaunch.
+- Keep About, the update window and the manager reminder in sync while downloading or preparing an update.
+- Preserve clipboard data and preferences through installation; retry failed downloads without replacing the working app.
+- Generate signed appcast.xml alongside every release archive and include Sparkle license notices.
+
 ## 1.2.2
 
 - Fix the quick panel's search icon so one click expands and focuses the native search editor, including after opening with the global shortcut.

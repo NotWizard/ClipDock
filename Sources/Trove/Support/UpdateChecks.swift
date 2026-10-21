@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Sparkle
 
 private final class UpdateFixtureProtocol: URLProtocol {
     static var responseCode = 200
@@ -20,8 +21,113 @@ private final class UpdateFixtureProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+/// Disposable installer fixtures relaunch without command-line arguments. Their
+/// private bundle marker keeps both launches isolated from the user's library.
+final class UpdateProbeDelegate: NSObject, NSApplicationDelegate {
+    let directory: URL
+    init(directory: URL) { self.directory = directory }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            if !FileManager.default.fileExists(atPath: directory.appendingPathComponent("library.json").path) {
+                DemoContent.prepare(update: false)
+                Preferences.shared.historyLimit = 250
+            }
+            Store.shared.save(immediately: true)
+            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+            let record: [String: Any] = [
+                "version": Bundle.main.shortVersion, "build": build,
+                "pid": ProcessInfo.processInfo.processIdentifier,
+                "items": Store.shared.items.map { $0.id.uuidString },
+                "pinboards": Store.shared.pinboards.map { $0.id.uuidString },
+                "historyLimit": Preferences.shared.historyLimit,
+                "shortcut": Preferences.shared.activateShortcut,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+                try? data.write(to: directory.appendingPathComponent("probe-\(build).json"), options: .atomic)
+            }
+            if build == Bundle.main.object(forInfoDictionaryKey: "ClipDockUpdaterProbeExitVersion") as? String {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { NSApp.terminate(nil) }
+            }
+        }
+    }
+}
+
 @MainActor
 enum UpdateChecks {
+    /// Exercises the real Sparkle installer against disposable external bundles only.
+    static func checkInstallation(hostURL: URL, feedURL: URL, expectedExecutable: URL, expectRejection: Bool, cancelDownload: Bool) async -> Int32 {
+        guard let host = Bundle(url: hostURL), host.bundleIdentifier?.hasPrefix("app.trove.updater-test.") == true,
+              hostURL.resolvingSymlinksInPath().path.hasPrefix(FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path + "/") else {
+            print("FAIL  installer check requires a disposable app.trove.updater-test.* bundle inside the temporary directory")
+            return 1
+        }
+        let infoURL = hostURL.appendingPathComponent("Contents/Info.plist")
+        let executableURL = hostURL.appendingPathComponent("Contents/MacOS/Trove")
+        guard let beforeInfo = try? Data(contentsOf: infoURL), let beforeBinary = try? Data(contentsOf: executableURL) else { return 1 }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UpdateFixtureProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let prefs = Preferences.shared
+        prefs.automaticallyChecksForUpdates = false
+        prefs.updateRepository = "NotWizard/ClipDock"
+        let release = AppRelease(tagName: "v\(Bundle.main.shortVersion)",
+                                 htmlURL: URL(string: "https://github.com/NotWizard/ClipDock/releases/tag/v\(Bundle.main.shortVersion)")!,
+                                 body: "Disposable installer fixture", draft: false, prerelease: false)
+        UpdateFixtureProtocol.responseCode = 200
+        UpdateFixtureProtocol.data = try! JSONEncoder().encode(release)
+        let updater = UpdateChecker(prefs: prefs, session: session, currentVersion: host.shortVersion, hostBundle: host, testFeedURL: feedURL)
+        await updater.check()
+        updater.downloadUpdate()
+        let deadline = Date().addingTimeInterval(90)
+        var previous: UpdateChecker.InstallState?
+        var cancellationRequested = false
+        while Date() < deadline {
+            if updater.installState != previous {
+                print("INSTALLER  \(updater.installState.rawValue)")
+                previous = updater.installState
+            }
+            if cancelDownload, !cancellationRequested, updater.installState == .downloading, updater.downloadedBytes > 0 {
+                cancellationRequested = true
+                updater.cancelDownload()
+            }
+            if cancellationRequested, updater.installState == .idle {
+                let unchanged = (try? Data(contentsOf: infoURL)) == beforeInfo && (try? Data(contentsOf: executableURL)) == beforeBinary
+                print("\(unchanged ? "PASS" : "FAIL")  real download cancellation finished; original app intact=\(unchanged)")
+                return unchanged ? 0 : 1
+            }
+            if updater.installState == .failed {
+                var error = updater.installationError
+                var signatureFailure = false
+                var codes: [Int] = []
+                while let current = error {
+                    codes.append(current.code)
+                    if current.domain == SUSparkleErrorDomain, [3001, 3002].contains(current.code) { signatureFailure = true }
+                    error = current.userInfo[NSUnderlyingErrorKey] as? NSError
+                }
+                let unchanged = (try? Data(contentsOf: infoURL)) == beforeInfo && (try? Data(contentsOf: executableURL)) == beforeBinary
+                let passed = expectRejection && signatureFailure && unchanged
+                print("\(passed ? "PASS" : "FAIL")  signed update rejection; original app intact=\(unchanged), error codes=\(codes), \(updater.lastError ?? "")")
+                return passed ? 0 : 1
+            }
+            if updater.installState == .ready { updater.performUpdateAction() }
+            if let data = try? Data(contentsOf: infoURL),
+               let info = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+               info["CFBundleVersion"] as? String == Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+               info["CFBundleShortVersionString"] as? String == Bundle.main.shortVersion {
+                let binary = try? Data(contentsOf: executableURL)
+                let current = try? Data(contentsOf: expectedExecutable)
+                let passed = !expectRejection && binary == current
+                print("\(passed ? "PASS" : "FAIL")  real Sparkle download, verification, extraction and replacement; executable matches new build")
+                return passed ? 0 : 1
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        print("FAIL  installer timed out: \(updater.status)")
+        return 1
+    }
+
     static func checkPublishedRelease() async -> Int32 {
         Preferences.shared.automaticallyChecksForUpdates = false
         let updater = UpdateChecker(currentVersion: "0.0.0")
@@ -46,6 +152,7 @@ enum UpdateChecks {
         check("repository rejects foreign hosts and path traversal", GitHubRepository("https://evil.example/a/b") == nil && GitHubRepository("a/..") == nil)
         check("repository rejects credentials and query injection", GitHubRepository("https://user@github.com/a/b") == nil && GitHubRepository("a/b?x=1") == nil)
         let repository = GitHubRepository("NotWizard/ClipDock")!
+        check("appcast stays inside the configured GitHub repository", repository.appcastURL.absoluteString == "https://github.com/NotWizard/ClipDock/releases/latest/download/appcast.xml")
         check("release URL restricted to the configured repository", !repository.containsReleaseURL(URL(string: "https://github.com/another/repo/releases/tag/v2.0.0")!) && !repository.containsReleaseURL(URL(string: "http://github.com/NotWizard/ClipDock/releases/tag/v2.0.0")!))
         check("version compares numbers rather than text", ReleaseVersion("v1.10.0")! > ReleaseVersion("1.9.9")!)
         check("major and minor versions compare correctly", ReleaseVersion("2.0.0")! > ReleaseVersion("1.99.99")! && ReleaseVersion("1.2")! == ReleaseVersion("1.2.0")!)
@@ -93,6 +200,36 @@ enum UpdateChecks {
         check("available update survives relaunch", restored.available?.tagName == "v1.3.0")
         let upgraded = UpdateChecker(prefs: prefs, session: session, currentVersion: "1.3.0")
         check("installing the release clears stale availability", upgraded.available == nil)
+
+        var cancelled = false
+        updater.showDownloadInitiated { cancelled = true }
+        check("download starts without assuming a known size", updater.installState == .downloading && updater.downloadProgress == nil && updater.canCancelDownload)
+        updater.showDownloadDidReceiveExpectedContentLength(100)
+        updater.showDownloadDidReceiveData(ofLength: 40)
+        check("download exposes real byte progress", updater.downloadProgress == 0.4 && updater.downloadedBytes == 40)
+        updater.showDownloadDidReceiveData(ofLength: UInt64.max)
+        check("untrusted lengths cannot overflow progress", updater.downloadedBytes == UInt64.max && updater.downloadProgress == 1 && !updater.transferDescription.isEmpty)
+        updater.cancelDownload()
+        let cancelling = cancelled && updater.installState == .cancelling && !updater.canPerformUpdateAction
+        updater.dismissUpdateInstallation()
+        check("cancel waits for cleanup and retains release for retry", cancelling && updater.installState == .idle && updater.available?.tagName == "v1.3.0" && updater.canPerformUpdateAction)
+        updater.showDownloadDidStartExtractingUpdate()
+        check("validation cannot be interrupted as a download", updater.installState == .preparing && !updater.canCancelDownload && !updater.canPerformUpdateAction)
+        var installed = 0
+        updater.showReady { _ in installed += 1 }
+        check("verified update waits for explicit install action", installed == 0 && updater.installState == .ready && updater.updateActionTitle == "安装并重启")
+        let requestsBeforeReadyCheck = UpdateFixtureProtocol.requests
+        await updater.check()
+        check("checking while ready reopens the same update", UpdateFixtureProtocol.requests == requestsBeforeReadyCheck && updater.installState == .ready)
+        updater.performUpdateAction()
+        updater.performUpdateAction()
+        check("install is committed once and cannot be double-triggered", installed == 1 && updater.installState == .installing)
+        updater.dismissUpdateInstallation()
+        var acknowledged = false
+        updater.showUpdaterError(URLError(.notConnectedToInternet)) { acknowledged = true }
+        updater.dismissUpdateInstallation()
+        check("installation failure keeps release and retry state", acknowledged && updater.installState == .failed && updater.available != nil && updater.canPerformUpdateAction && updater.lastError != nil)
+
         prefs.updateRepository = "other/repo"
         check("cached release cannot cross repositories", UpdateChecker(prefs: prefs, session: session).available == nil)
         prefs.updateRepository = "NotWizard/ClipDock"

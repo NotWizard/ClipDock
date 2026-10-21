@@ -632,7 +632,9 @@ enum SelfTest {
         var size = CGSize(width: 1040, height: 660)
 
         switch name {
-        case "main":
+        case "main", "main-ready", "main-downloading":
+            if name == "main-ready" { UpdateChecker.shared.showReady(toInstallAndRelaunch: { _ in }) }
+            if name == "main-downloading" { UpdateChecker.shared.showDownloadInitiated(cancellation: {}) }
             view = AnyView(MainWindowView(store: store, prefs: prefs, model: MainViewModel(store: store, prefs: prefs)))
         case "quick":
             size = CGSize(width: 1200, height: 332)
@@ -645,8 +647,17 @@ enum SelfTest {
         case "about":
             size = CGSize(width: 680, height: 540)
             view = AnyView(SettingsView(prefs: prefs, store: store, initialTab: .about))
-        case "update":
-            size = CGSize(width: 440, height: 370)
+        case "update", "update-downloading", "update-ready", "update-error":
+            size = CGSize(width: 440, height: 420)
+            if name == "update-downloading" {
+                UpdateChecker.shared.showDownloadInitiated(cancellation: {})
+                UpdateChecker.shared.showDownloadDidReceiveExpectedContentLength(8_000_000)
+                UpdateChecker.shared.showDownloadDidReceiveData(ofLength: 3_000_000)
+            } else if name == "update-ready" {
+                UpdateChecker.shared.showReady(toInstallAndRelaunch: { _ in })
+            } else if name == "update-error" {
+                UpdateChecker.shared.showUpdaterError(URLError(.notConnectedToInternet), acknowledgement: {})
+            }
             view = AnyView(UpdatePrompt(updates: .shared, close: {}))
         case "onboarding", "onboarding-keys", "onboarding-privacy":
             size = OnboardingView.size
