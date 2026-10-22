@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 
 final class SnapshotDelegate: NSObject, NSApplicationDelegate {
     let name: String
@@ -32,6 +33,35 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
 //   Trove --render-previews DIR render every screen to PNG and exit
 
 let arguments = CommandLine.arguments
+
+if arguments.contains("--paste-status") {
+    let status: [String: Any] = [
+        "bundle": Bundle.main.bundleIdentifier ?? "",
+        "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+        "accessibility": AXIsProcessTrusted(),
+        "postEvents": CGPreflightPostEventAccess(),
+        "directPasteEnabled": MainActor.assumeIsolated { Preferences.shared.pasteToActiveApp },
+        "frontmostBundle": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+    ]
+    if let data = try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys]) {
+        print(String(decoding: data, as: UTF8.self))
+    }
+    exit(0)
+}
+
+if let index = arguments.firstIndex(of: "--check-paste"), arguments.count > index + 2,
+   let pid = Int32(arguments[index + 1]) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-pastecheck-\(UUID().uuidString)")
+    setenv("TROVE_TEST_DATA_DIR", root.path, 1)
+    let app = NSApplication.shared
+    let delegate = PasteCheckDelegate(pid: pid, directory: URL(fileURLWithPath: arguments[index + 2], isDirectory: true))
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory)
+    app.run()
+    try? FileManager.default.removeItem(at: root)
+    UserDefaults.standard.removePersistentDomain(forName: "app.trove.test.\(root.lastPathComponent)")
+    exit(delegate.status)
+}
 
 if Bundle.main.bundleIdentifier?.hasPrefix("app.trove.updater-test.") == true,
    let probePath = Bundle.main.object(forInfoDictionaryKey: "ClipDockUpdaterProbeDirectory") as? String {

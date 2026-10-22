@@ -185,6 +185,11 @@ enum SelfTest {
         let countBeforeUse = store.totalCount
         _ = Paster.shared.write(items: [usageItems[2]], store: store, pasteboard: pb)
         check("using an older history item promotes the existing entry", store.items.first?.id == usageItems[2].id && store.totalCount == countBeforeUse)
+        let beforeDeferredUse = store.items.map(\.id)
+        _ = Paster.shared.write(items: [usageItems[0]], store: store, pasteboard: pb, promote: false)
+        check("preparing a paste does not move visible history", store.items.map(\.id) == beforeDeferredUse)
+        Paster.shared.markUsed([usageItems[0]], store: store)
+        check("completing a paste promotes the existing entry once", store.items.first?.id == usageItems[0].id && store.totalCount == countBeforeUse)
         _ = Paster.shared.write(items: [usageItems[1], usageItems[0]], store: store, pasteboard: pb)
         check("batch use preserves the selected order at the front", Array(store.items.prefix(2).map(\.id)) == [usageItems[1].id, usageItems[0].id])
         let orderBeforeFailure = store.items.map(\.id)
@@ -327,7 +332,32 @@ enum SelfTest {
 
     // MARK: Native panel regression
 
+    static func copyPasteboard(_ pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
+        var backup: [NSPasteboardItem] = []
+        for original in pasteboard.pasteboardItems ?? [] {
+            let copy = NSPasteboardItem()
+            for type in original.types {
+                guard let data = original.data(forType: type) else { return nil }
+                copy.setData(data, forType: type)
+            }
+            backup.append(copy)
+        }
+        return backup
+    }
+
     static func checkPanel(to directory: URL) -> Int32 {
+        let clipboard = NSPasteboard.general
+        guard let backup = copyPasteboard(clipboard) else {
+            print("FAIL cannot preserve an original clipboard representation")
+            return 2
+        }
+        var ownedChange: Int?
+        defer {
+            if clipboard.changeCount == ownedChange {
+                clipboard.clearContents()
+                if !backup.isEmpty { clipboard.writeObjects(backup) }
+            }
+        }
         let menuDelegate = AppDelegate()
         menuDelegate.installMenus()
         var failures = 0
@@ -355,7 +385,10 @@ enum SelfTest {
             item.sourceBundleID = index == 1 ? "com.apple.TextEdit" : "com.apple.Safari"
             item.sourceName = index == 1 ? "文本编辑" : "Safari"
             item.createdAt = Date().addingTimeInterval(Double(-index * 60))
-            item.payloads = store.storePayloads(for: item.id, captured: [(NSPasteboard.PasteboardType.string.rawValue, Data(text.utf8), 0)])
+            item.payloads = store.storePayloads(for: item.id, captured: [
+                (NSPasteboard.PasteboardType.string.rawValue, Data(text.utf8), 0),
+                ("org.nspasteboard.TransientType", Data(), 0)
+            ])
             store.insert(item)
             fixtureIDs.append(item.id)
         }
@@ -498,6 +531,23 @@ enum SelfTest {
         if let data = try? JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("panel-check.json"))
         }
+        if let older = store.items.first(where: { $0.id == fixtureIDs[0] }) {
+            model.selection = [older.id]
+            let order = store.items.map(\.id)
+            windows.commitSelection(copyOnly: true)
+            ownedChange = clipboard.changeCount
+            check("commit starts closing without moving the visible card", panel.isVisible && store.items.map(\.id) == order)
+            pump()
+            check("commit promotes history only after the panel is hidden", !panel.isVisible && store.items.first?.id == older.id)
+            windows.showQuickPaste()
+            pump()
+            check("next invocation selects the item from the completed commit", model.current?.id == older.id)
+        }
+        var didClose: Bool?
+        windows.closeQuickPaste(restoreTarget: false) { didClose = $0 }
+        windows.showQuickPaste()
+        pump()
+        check("reopening cancels the pending close completion", didClose == false && panel.isVisible)
         let shortcut = prefs.activateShortcut
         windows.showOnboarding()
         pump()

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.7
+
+- Close the clipboard panel with its dismissal animation before restoring the original application and sending paste input.
+- Promote the used history item after delivery so the current card does not jump ahead while the panel is closing; the next invocation starts with the pasted item.
+- Report unavailable direct-paste permissions or focus explicitly, cancel changed-clipboard transactions, and prevent repeated commits from pasting twice.
+- Add an isolated native receiver check that verifies text at the original caret rather than treating a clipboard write as successful delivery.
+
 ## 1.2.6
 
 - Fix mouse clicks on the collapsed search icon being intercepted by the focused native text editor. The first click now expands search while preserving native editing and input-method behavior.

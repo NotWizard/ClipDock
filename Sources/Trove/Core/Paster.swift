@@ -10,6 +10,7 @@ final class Paster {
 
     private(set) var pasteTarget: NSRunningApplication?
     private(set) var lastError: String?
+    private(set) var isPasting = false
     private var activationObserver: NSObjectProtocol?
 
     var hasAccessibility: Bool { AXIsProcessTrusted() && CGPreflightPostEventAccess() }
@@ -17,6 +18,7 @@ final class Paster {
 
     private var validTarget: NSRunningApplication? {
         guard let target = pasteTarget, !target.isTerminated,
+              target.bundleIdentifier != "com.apple.loginwindow",
               target.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
         return target
     }
@@ -39,7 +41,7 @@ final class Paster {
     // MARK: Clipboard representations
 
     @discardableResult
-    func write(items: [ClipItem], plainText: Bool = false, store: Store, pasteboard: NSPasteboard = .general) -> Bool {
+    func write(items: [ClipItem], plainText: Bool = false, store: Store, pasteboard: NSPasteboard = .general, promote: Bool = true) -> Bool {
         lastError = nil
         var written: [NSPasteboardItem] = []
         let forcePlainText = plainText || Preferences.shared.alwaysPlainText
@@ -87,10 +89,14 @@ final class Paster {
         if pasteboard.name == NSPasteboard.general.name, NSApp?.delegate is AppDelegate {
             TroveApp.shared.monitor.suppressNextChange()
         }
-        // Every successful copy/paste route shares this writer, including the clipboard-only fallback.
+        if promote { markUsed(items, store: store) }
+        return true
+    }
+
+    func markUsed(_ items: [ClipItem], store: Store) {
         // Reverse the batch so the first selected item remains first; keep manual Pinboard order.
         for clip in items.reversed() where clip.pinboardID == nil { store.moveToTop(clip.id) }
-        return true
+        store.lastCopiedID = items.first?.id
     }
 
     @discardableResult
@@ -137,35 +143,73 @@ final class Paster {
 
     func rememberFrontmostTarget() {
         guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
+              app.bundleIdentifier != "com.apple.loginwindow",
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         pasteTarget = app
     }
 
     @discardableResult
-    func paste(items: [ClipItem], plainText: Bool = false, hide: () -> Void) -> Bool {
+    func paste(items: [ClipItem], plainText: Bool = false,
+               hide: (@escaping (Bool) -> Void) -> Void,
+               completion: @escaping (Bool) -> Void = { _ in }) -> Bool {
+        guard !isPasting else { return false }
         rememberFrontmostTargetIfUnset()
         let target = validTarget
-        guard let first = items.first, write(items: items, plainText: plainText, store: .shared) else { return false }
-        Store.shared.lastCopiedID = first.id
-        guard Preferences.shared.pasteToActiveApp, hasAccessibility, let target else {
+        guard !items.isEmpty, write(items: items, plainText: plainText, store: .shared, promote: false) else { return false }
+        guard Preferences.shared.pasteToActiveApp else {
+            markUsed(items, store: .shared)
             SoundFeedback.shared.playCopy()
             return false
         }
-        guard target.activate(options: []) else {
-            lastError = "已复制，但无法激活目标应用。请切回目标应用按 ⌘V。"
+        guard hasAccessibility else {
+            lastError = AXIsProcessTrusted()
+                ? "已复制，但 macOS 尚未允许 ClipDock 发送粘贴按键。请在系统设置中重新启用 ClipDock 的辅助功能权限。"
+                : "已复制，但 ClipDock 的辅助功能授权尚未生效。请在系统设置中重新启用 ClipDock 后重试。"
             return false
         }
-        hide()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard !target.isTerminated else { return }
-            Paster.sendCommandV(to: target.processIdentifier)
-            SoundFeedback.shared.playPaste()
+        guard let target else {
+            lastError = "已复制，但未找到唤起前的目标应用。请回到需要粘贴的输入框，再唤起剪贴板。"
+            return false
+        }
+        let changeCount = NSPasteboard.general.changeCount
+        isPasting = true
+        hide { [self] didHide in
+            guard didHide else { isPasting = false; completion(false); return }
+            Task { @MainActor in
+                defer { isPasting = false }
+                guard !target.isTerminated, target.activate(options: []) else {
+                    lastError = "已复制，但无法恢复目标应用。请切回目标输入框按 ⌘V。"
+                    completion(false)
+                    return
+                }
+                // Allow the window server to release the nonactivating panel's keyboard focus.
+                // Never retry Cmd-V: macOS does not provide a receipt for the resulting paste.
+                for _ in 0..<20 {
+                    try? await Task.sleep(for: .milliseconds(25))
+                    guard NSPasteboard.general.changeCount == changeCount else {
+                        lastError = "剪贴板在回贴前已改变，本次粘贴已取消。请重新选择条目。"
+                        completion(false)
+                        return
+                    }
+                    guard !target.isTerminated else { break }
+                    if target.isActive, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+                       NSApp.keyWindow == nil {
+                        guard Self.sendCommandV() else { break }
+                        markUsed(items, store: .shared)
+                        SoundFeedback.shared.playPaste()
+                        completion(true)
+                        return
+                    }
+                }
+                lastError = "已复制，但未能恢复目标输入焦点。请切回目标输入框按 ⌘V。"
+                completion(false)
+            }
         }
         return true
     }
 
     @discardableResult
-    func pasteMultiple(items: [ClipItem], hide: () -> Void) -> Bool {
+    func pasteMultiple(items: [ClipItem], hide: (@escaping (Bool) -> Void) -> Void) -> Bool {
         paste(items: items, hide: hide)
     }
 
@@ -173,14 +217,15 @@ final class Paster {
         validTarget?.activate(options: [])
     }
 
-    private static func sendCommandV(to pid: pid_t) {
+    private static func sendCommandV() -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return false }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        down.postToPid(pid)
-        up.postToPid(pid)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
     }
 }
 

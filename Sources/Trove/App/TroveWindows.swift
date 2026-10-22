@@ -17,7 +17,6 @@ final class TroveWindows {
     private var keyMonitors: [ObjectIdentifier: Any] = [:]
     private var outsideClickMonitor: Any?
     private var workspaceObserver: NSObjectProtocol?
-    private var dismissalWorkItem: DispatchWorkItem?
     private var presentationID = UUID()
 
     var mainModel: MainViewModel { TroveApp.shared.mainModel }
@@ -66,7 +65,6 @@ final class TroveWindows {
 
     func showQuickPaste() {
         Paster.shared.rememberFrontmostTarget()
-        dismissalWorkItem?.cancel()
         let id = UUID()
         presentationID = id
         mainModel.preparePanel()
@@ -121,9 +119,8 @@ final class TroveWindows {
                width: max(0, screenFrame.width - 16), height: min(332, max(0, screenFrame.height - 16)))
     }
 
-    func closeQuickPaste(restoreTarget: Bool = true) {
-        dismissalWorkItem?.cancel()
-        guard let panel = quickPanel, panel.isVisible else { return }
+    func closeQuickPaste(restoreTarget: Bool = true, completion: ((Bool) -> Void)? = nil) {
+        guard let panel = quickPanel, panel.isVisible else { completion?(true); return }
         let id = UUID()
         presentationID = id
         mainModel.previewID = nil
@@ -136,15 +133,22 @@ final class TroveWindows {
             if !reduceMotion { panel.animator().setFrame(panel.frame.offsetBy(dx: 0, dy: -12), display: true) }
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                guard self?.presentationID == id else { return }
+                guard self?.presentationID == id else { completion?(false); return }
                 panel.orderOut(nil)
                 if restoreTarget { Paster.shared.restoreTarget() }
+                completion?(true)
             }
         })
     }
 
+    func hideForPaste(completion: @escaping (Bool) -> Void) {
+        closeQuickPaste(restoreTarget: false) { [self] didClose in
+            if didClose { hideAll() }
+            completion(didClose)
+        }
+    }
+
     func hideAll() {
-        dismissalWorkItem?.cancel()
         presentationID = UUID()
         mainModel.previewID = nil
         mainModel.showFilters = false
@@ -158,21 +162,26 @@ final class TroveWindows {
     func commitSelection(copyOnly: Bool = false, plainText: Bool = false) {
         let chosen = mainModel.selectedItems
         guard !chosen.isEmpty else { return }
-        dismissalWorkItem?.cancel()
         let plain = plainText || mainModel.plainTextMode
         let paster = Paster.shared
-        if !copyOnly, paster.paste(items: chosen, plainText: plain, hide: { self.hideAll() }) { return }
-        if copyOnly, !paster.copy(items: chosen, plainText: plain) {
-            mainModel.feedback = paster.lastError ?? "复制失败，请重试。"
+        guard !paster.isPasting else { return }
+        if copyOnly || !TroveApp.shared.prefs.pasteToActiveApp {
+            guard paster.write(items: chosen, plainText: plain, store: .shared, promote: false) else {
+                mainModel.feedback = paster.lastError ?? "复制失败，请重试。"
+                return
+            }
+            hideForPaste { didHide in
+                if didHide { paster.markUsed(chosen, store: .shared); SoundFeedback.shared.playCopy() }
+            }
             return
         }
-        if let error = paster.lastError { mainModel.feedback = error; return }
-        mainModel.feedback = "已复制 · 在目标应用按 ⌘V 粘贴"
-        if quickPanel?.isVisible == true {
-            let work = DispatchWorkItem { [weak self] in self?.closeQuickPaste() }
-            dismissalWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1, execute: work)
+        let started = paster.paste(items: chosen, plainText: plain, hide: hideForPaste) { [self] success in
+            if !success, let error = paster.lastError {
+                if quickPanel?.isVisible != true { showQuickPaste() }
+                mainModel.feedback = error
+            }
         }
+        if !started { mainModel.feedback = paster.lastError ?? "无法粘贴，请重试。" }
     }
 
     private func installDismissalMonitors() {

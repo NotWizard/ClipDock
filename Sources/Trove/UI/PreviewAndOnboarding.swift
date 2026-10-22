@@ -116,7 +116,10 @@ struct ItemPreviewWindowView: View {
             }
             Button {
                 Paster.shared.rememberFrontmostTarget()
-                _ = Paster.shared.paste(items: [item], hide: { close() })
+                _ = Paster.shared.paste(items: [item], hide: { done in
+                    close()
+                    TroveWindows.shared.hideForPaste(completion: done)
+                })
             } label: {
                 Label("Paste", systemImage: "arrow.down.doc")
             }

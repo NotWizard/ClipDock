@@ -42,10 +42,14 @@ final class PasteStackModel: ObservableObject {
     func pasteNext(hide: @escaping () -> Void) {
         guard let first = items.first else { return }
         Paster.shared.rememberFrontmostTarget()
-        if Paster.shared.paste(items: [first], hide: hide) {
-            queue.removeAll { $0 == first.id }
-            feedback = nil
-        } else {
+        let started = Paster.shared.paste(items: [first], hide: { done in
+            hide()
+            TroveWindows.shared.hideForPaste(completion: done)
+        }) { [self] success in
+            if success { queue.removeAll { $0 == first.id }; feedback = nil }
+            else { feedback = Paster.shared.lastError ?? "粘贴已取消，条目仍保留在队列中。" }
+        }
+        if !started {
             feedback = Paster.shared.lastError ?? "已复制。直接粘贴尚不可用，条目仍保留在队列中。"
         }
     }
