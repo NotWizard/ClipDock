@@ -10,4 +10,8 @@ docs/*
 
 # Update signing secrets stay outside the checkout.
 *-private-key
+*.p12
+*.pfx
+*.keychain*
+app-signing-password
 *.ed25519

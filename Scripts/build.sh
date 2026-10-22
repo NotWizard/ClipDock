@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds Trove.app — a self-contained, ad-hoc signed macOS bundle.
+# Builds ClipDock.app with the persistent signing identity when available.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,10 +30,8 @@ ditto "$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x8
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-echo "▸ Signing (ad-hoc)…"
-codesign --force --deep --sign - --timestamp=none "$APP" >/dev/null 2>&1 || {
-  echo "  codesign failed"; exit 1;
-}
+echo "▸ Signing…"
+python3 Scripts/sign-app.py "$APP"
 
 echo "✓ $APP"
 du -sh "$APP" | awk '{print "  size: "$1}'

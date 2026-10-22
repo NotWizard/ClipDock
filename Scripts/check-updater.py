@@ -31,9 +31,12 @@ def run(args):
     return subprocess.run([str(a) for a in args], check=True, capture_output=True, text=True).stdout
 
 
-def write_info(app, info):
+def write_info(app, info, ad_hoc=False):
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
-    run(["codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", app])
+    if ad_hoc:
+        run(["codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", app])
+    else:
+        run([sys.executable, REPO / "Scripts/sign-app.py", app, "--require-stable"])
 
 
 def digest(path):
@@ -79,7 +82,7 @@ results = []
 old_process = None
 
 try:
-    for case in ["tampered-feed", "tampered-archive", "cancel-download", "valid-update"]:
+    for case in ["tampered-feed", "tampered-archive", "cancel-download", "valid-update", "ad-hoc-transition"]:
         identifier = "app.trove.updater-test." + uuid.uuid4().hex
         case_dir = WORK / case
         old = case_dir / "old/ClipDock.app"
@@ -88,13 +91,19 @@ try:
         for app in [old, new]:
             run(["ditto", APP, app])
             data = dict(info, CFBundleIdentifier=identifier, SUPublicEDKey=public_key)
-            if case == "valid-update":
+            if case in ["valid-update", "ad-hoc-transition"]:
                 data["ClipDockUpdaterProbeDirectory"] = str(probe)
                 data["ClipDockUpdaterProbeExitVersion"] = str(build)
             if app == old:
                 data["CFBundleVersion"] = str(build - 1)
                 data["CFBundleShortVersionString"] = "1.2.2"
-            write_info(app, data)
+            write_info(app, data, ad_hoc=case == "ad-hoc-transition" and app == old)
+        old_requirement = run(["codesign", "-d", "-r-", old]).strip()
+        new_requirement = run(["codesign", "-d", "-r-", new]).strip()
+        if case == "ad-hoc-transition":
+            assert "cdhash" in old_requirement and "certificate leaf" in new_requirement
+        else:
+            assert old_requirement == new_requirement
         archive = SERVE / (case + ".zip")
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", new, archive])
         signature = run([TOOLS / "sign_update", "--ed-key-file", key, "-p", archive]).strip()
@@ -126,20 +135,20 @@ try:
         elif case == "cancel-download":
             command.append("--cancel-download")
         old_process = None
-        if case == "valid-update":
-            with (OUTPUT / "relaunch-probe.log").open("w") as log:
+        if case in ["valid-update", "ad-hoc-transition"]:
+            with (OUTPUT / (case + "-relaunch-probe.log")).open("w") as log:
                 old_process = subprocess.Popen([str(old / "Contents/MacOS/Trove")], stdout=log, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 15
             while not (probe / ("probe-" + str(build - 1) + ".json")).exists():
                 if time.monotonic() > deadline or old_process.poll() is not None:
-                    raise RuntimeError("Disposable old app did not launch; see relaunch-probe.log")
+                    raise RuntimeError("Disposable old app did not launch; see " + case + "-relaunch-probe.log")
                 time.sleep(0.05)
         with (OUTPUT / (case + ".log")).open("w") as log:
             result = subprocess.run([str(x) for x in command], stdout=log, stderr=subprocess.STDOUT, timeout=110)
         if result.returncode != 0:
             raise RuntimeError(case + " failed; see " + str(OUTPUT / (case + ".log")))
         run(["codesign", "--verify", "--deep", "--strict", old])
-        if case == "valid-update":
+        if case in ["valid-update", "ad-hoc-transition"]:
             assert digest(old / "Contents/MacOS/Trove") == digest(new / "Contents/MacOS/Trove")
             assert (old / "Contents/Info.plist").read_bytes() == (new / "Contents/Info.plist").read_bytes()
             after_path = probe / ("probe-" + str(build) + ".json")
@@ -152,8 +161,8 @@ try:
             after = json.loads(after_path.read_text())
             assert before["pid"] != after["pid"] and old_process.wait(timeout=10) == 0
             assert all(before[k] == after[k] for k in ["items", "pinboards", "historyLimit", "shortcut"])
-            (OUTPUT / "relaunch-preservation.json").write_text(json.dumps({"before": before, "after": after}, indent=2) + "\n")
-        results.append({"case": case, "passed": True})
+            (OUTPUT / (case + "-preservation.json")).write_text(json.dumps({"before": before, "after": after}, indent=2) + "\n")
+        results.append({"case": case, "passed": True, "oldRequirement": old_requirement, "newRequirement": new_requirement})
         print("PASS  " + case, flush=True)
     (OUTPUT / "results.json").write_text(json.dumps(results, indent=2) + "\n")
 except Exception:

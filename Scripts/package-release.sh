@@ -7,7 +7,7 @@ if [[ ! -f "$UPDATE_KEY" ]]; then
   echo "Update signing key missing. Set CLIPDOCK_UPDATE_KEY_FILE to your private Ed25519 key file (see CONTRIBUTING.md)." >&2
   exit 1
 fi
-./Scripts/build.sh
+CLIPDOCK_REQUIRE_STABLE_SIGNING=1 ./Scripts/build.sh
 APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' Resources/Info.plist)
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
 ARCH=$(uname -m)

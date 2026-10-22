@@ -15,6 +15,8 @@ open build/ClipDock.app
 
 应用显示名为 ClipDock。Swift Package 目标、可执行文件、Bundle ID 和资料库目录沿用旧名 Trove，以兼容已有数据；不要仅为统一名称修改这些身份标识。
 
+1.2.8 起，维护者使用固定的自签名证书构建发行包；公有证书位于 `Resources/Signing/ClipDock.cer`。没有对应私钥时，本地开发构建仍可使用 ad-hoc 签名，脚本会明确提示授权可能重置；正式打包不允许降级到 ad-hoc。
+
 ## 验证
 
 在仓库根目录运行。以下检查使用独立的临时资料库与偏好。核心检查使用私有 pasteboard；面板提交检查会暂时写入系统剪贴板，保存并恢复原有格式，期间发生的新复制不会被恢复操作覆盖：
@@ -98,6 +100,12 @@ python3 Scripts/check-paste.py /tmp/clipdock-paste-check
 
 这些检查验证了跨进程回贴及原生面板行为，未模拟物理全局快捷键或卡片双击，不代表所有第三方应用、多屏与Spaces组合均已验收。个人安装版未被测试脚本替换。
 
+### 1.2.8 的固定签名与授权保留验证
+
+核心47项、更新43项、原生面板37项、原生签名8项、应用自身授权2项、真实回贴8项检查通过，共145项；另有5类隔离安装集成测试通过。两个不同的可执行文件拥有不同代码哈希，但保持同一证书与Bundle ID要求。通过LaunchServices启动后，首次授权前两者均返回辅助功能/发送事件权限为false；用户授权一次后，两者均返回true，期间未再次授权。真实接收器收到原光标位置的合成文本且仅一次，面板关闭、使用后排序和下次唤起均通过。第一次回贴检查中的粘贴后焦点项未通过，复验完整8项通过，未放宽检查条件。
+
+本机1.2.7安装版已通过正常退出、备份及替换安装为1.2.8，原有36个条目、1个Pinboard和119个原始载荷文件在替换时均保留；用户在系统界面完成了签名身份切换后的首次辅助功能授权。签名身份测试验证了同一授权适用于两份不同代码，未把物理全局快捷键或尚未发布的未来正式版本升级视为已实测。
+
 ## 演示与截图
 
 应用图标的生成模型源图与完整提示词位于 `Resources/Artwork/`。`Scripts/make-icon.swift` 仅为该源图生成原生尺寸和光学留白；菜单栏图标由同一套折角卡片与托盘轮廓绘制为22 pt模板PDF，包含记录和暂停两种状态。构建不需要重新调用生成模型。
@@ -151,3 +159,28 @@ export CLIPDOCK_UPDATE_KEY_FILE="/你的安全目录/ed25519-private-key"
 私钥文件使用 Sparkle 支持的 Base64 密钥格式；可用 Sparkle 的 `generate_keys` 工具管理密钥，参见[官方签名指南](https://sparkle-project.org/documentation/)。本机默认路径是 `~/Library/Application Support/ClipDock Release Signing/ed25519-private-key`。打包脚本缺少私钥时会停止；已签名的更新信息后续修改需要重新签名。
 
 Fork 的独立发行必须生成自己的密钥，同时更新 `SUPublicEDKey`、`SUFeedURL` 和 `GitHubRepository`。原项目用户仅信任原项目密钥；不要把同一公钥误用于无法取得私钥的 Fork。Ed25519 更新签名与 Apple Developer ID 签名用途不同，Developer ID 签名和公证仍需另行完成。
+
+### 固定的应用签名身份
+
+1.2.8 起，发行包使用 `ClipDock Local Code Signing` 自签名证书。原生 designated requirement 同时绑定应用 Bundle ID 与证书指纹，不包含版本的代码哈希，也不以名称相同代替证书校验。该方案无需 Apple Developer 账号，但不提供 Apple 公证或 Gatekeeper 的开发者认证。证书转换时仍需用户手动授权一次；保持授权的目标适用于后续沿用同一身份的版本。
+
+公开证书固定在 `Resources/Signing/ClipDock.cer`，私钥保存在仓库外的 `~/Library/Application Support/ClipDock Release Signing/` 独立钥匙串中；`CLIPDOCK_SIGNING_DIR` 可指定外部备份目录。密码与加密的 `app-signing-identity.p12` 也在这个私有目录中，权限为600。请将整个私有目录另行安全备份，不能提交或放进安装包。丢失私钥后不能仅靠公开证书恢复同一身份。
+
+`Scripts/sign-app.py --init` 仅供首次创建独立身份使用，已有证书或私钥时会拒绝运行。常规更新必须恢复并复用既有身份，不能每次初始化。签名不要求用户导入证书为系统信任根，也不改写辅助功能权限数据库。
+
+```bash
+python3 Scripts/sign-app.py build/ClipDock.app --verify
+python3 Scripts/check-signing.py /tmp/clipdock-signing-check
+python3 Scripts/check-updater.py /tmp/clipdock-updater-check
+```
+
+签名检查需要维护者的固定签名身份，验证两个不同可执行文件互认同一证书与标识，并拒绝相同标识的ad-hoc副本、其他标识和篡改资源。安装检查从1.2.8起使用同一签名助手，覆盖5类用例：篡改更新信息、损坏安装包、取消下载、固定签名间的正常替换重启，以及旧ad-hoc到固定签名的迁移。
+
+辅助功能必须在应用自己的启动身份下检查。通过终端直接运行二进制可能继承终端或代理的权限，因此回贴检查改为经LaunchServices启动测试宿主；不会以终端里的授权状态替代App实际授权。用户手动授权固定身份后，可运行下面的检查，确认两份不同二进制都保留辅助功能及发送事件权限：
+
+```bash
+python3 Scripts/check-signing.py /tmp/clipdock-permission-check --check-permissions
+python3 Scripts/check-paste.py /tmp/clipdock-paste-check
+```
+
+权限检查不发送粘贴事件，仅调用系统授权查询，测试产物使用正式Bundle ID与固定证书；回贴检查将一次真实粘贴发送到独立的合成文本接收器。两种检查均不写入个人资料库或替换安装版。未授权时应明确失败，不能声称已完成升级后的授权保留验收。

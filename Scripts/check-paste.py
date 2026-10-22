@@ -79,11 +79,19 @@ try:
         if receiver.poll() is not None or time.monotonic() > deadline:
             raise RuntimeError('Disposable receiver did not become ready')
         time.sleep(0.05)
-    with (OUTPUT / 'paste.log').open('w') as log:
-        result = subprocess.run([str(APP / 'Contents/MacOS/Trove'), '--check-paste', str(receiver.pid), str(OUTPUT)],
-                                stdout=log, stderr=subprocess.STDOUT, timeout=20)
-    print((OUTPUT / 'paste.log').read_text())
-    if result.returncode:
+    paste_log = OUTPUT / 'paste.log'
+    paste_log.unlink(missing_ok=True)
+    # Test the app's own permissions, not permissions inherited from the shell.
+    subprocess.run(['open', '-n', '-g', '--stdout', str(paste_log), '--stderr', str(OUTPUT / 'host.log'),
+                    str(APP), '--args', '--check-paste', str(receiver.pid), str(OUTPUT)], check=True)
+    deadline = time.monotonic() + 20
+    while True:
+        report = paste_log.read_text() if paste_log.exists() else ''
+        if 'PASTE CHECK OK' in report or 'FAIL' in report or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    print(report)
+    if 'PASTE CHECK OK' not in report:
         raise RuntimeError('Paste check failed; see ' + str(OUTPUT))
     receipt = json.loads((OUTPUT / 'received.json').read_text())
     assert receipt == {'text': 'left-CLIPDOCK_CARET_TEST-right', 'count': 1, 'caret': 24}, receipt

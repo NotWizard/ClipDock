@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.8
+
+- Replace per-build ad-hoc signatures in releases with one persistent, self-signed code-signing identity; keep the certificate and bundle identifier in the application's designated requirement across versions.
+- Pin the public certificate in source, keep its private key outside the repository, and refuse release packaging when the matching identity is unavailable.
+- Verify that different versions satisfy the same identity requirement while ad-hoc impersonation, another bundle identifier and modified resources are rejected.
+- The first transition to this signing identity requires Accessibility authorization again. This free signing method does not provide Apple Developer ID certification or notarization.
+
 ## 1.2.7
 
 - Close the clipboard panel with its dismissal animation before restoring the original application and sending paste input.
