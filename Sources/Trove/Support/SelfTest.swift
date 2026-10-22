@@ -381,15 +381,36 @@ enum SelfTest {
             guard let view else { return nil }
             return (view as? NSSearchField) ?? view.subviews.lazy.compactMap { searchField(in: $0) }.first
         }
-        if let field = searchField(in: panel.contentView),
-           let button = (field.cell as? NSSearchFieldCell)?.searchButtonCell, let action = button.action {
-            _ = NSApp.sendAction(action, to: button.target, from: field)
+        func clickSearchIcon(_ field: NSSearchField) {
+            let icon = (field.cell as? NSSearchFieldCell)?.searchButtonRect(forBounds: field.bounds) ?? field.bounds
+            let point = field.convert(NSPoint(x: icon.midX, y: icon.midY), to: nil)
+            if let hit = panel.contentView?.hitTest(point) { print("INFO search click hit: \(type(of: hit))") }
+            let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                                          context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+            let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                        timestamp: down.timestamp + 0.01, windowNumber: panel.windowNumber,
+                                        context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+            // Native text/cell tracking may synchronously wait for mouse-up.
+            NSApp.postEvent(up, atStart: true)
+            NSApp.sendEvent(down)
+            if let queuedUp = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                NSApp.sendEvent(queuedUp)
+            }
+        }
+        if let field = searchField(in: panel.contentView) {
+            let editor = field.currentEditor()
+            clickSearchIcon(field)
             pump()
-            check("search icon's native action expands search on first press", model.isSearching && field.frame.width > 300)
-            check("search icon immediately focuses the existing editor", field.currentEditor() === panel.firstResponder)
+            check("first mouse click on search icon expands the field", model.isSearching && field.frame.width > 300)
+            check("search click immediately focuses the existing editor", editor != nil && field.currentEditor() === editor && editor === panel.firstResponder)
+            let textPoint = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+            check("expanded search retains native text hit testing", panel.contentView?.hitTest(textPoint) is NSTextView)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            capture(panel, to: directory.appendingPathComponent("search-expanded.png"))
             model.preparePanel()
             pump()
-        } else { check("search icon has a native action", false) }
+        } else { check("search icon has a native field", false) }
         if let editor = panel.firstResponder as? NSTextView {
             editor.insertText("TROVE_UI_AUDIT", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
             pump()
@@ -461,6 +482,11 @@ enum SelfTest {
             check("reopened panel starts with the recently used card", model.items.first?.id == older.id && model.current?.id == older.id)
         }
         pasteboard.releaseGlobally()
+        if let field = searchField(in: panel.contentView) {
+            clickSearchIcon(field)
+            pump()
+            check("first search click works again after reopening the panel", model.isSearching && field.frame.width > 300)
+        } else { check("reopened panel retains its native search field", false) }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         capture(panel, to: directory.appendingPathComponent("panel-native.png"))
         let geometry: [String: Any] = ["frame": NSStringFromRect(panel.frame), "keyWindow": panel.isKeyWindow,

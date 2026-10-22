@@ -400,6 +400,11 @@ private struct PanelSearchField: NSViewRepresentable {
         var expand: (() -> Void)?
         var isSearching = false
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            let hit = super.hitTest(point)
+            // The mounted field editor covers the icon while search is collapsed.
+            return !isSearching && hit != nil ? self : hit
+        }
         override func mouseDown(with event: NSEvent) {
             if !isSearching {
                 // Do not enter native cell tracking while SwiftUI is resizing the control.

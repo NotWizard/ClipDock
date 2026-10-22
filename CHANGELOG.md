@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.6
+
+- Fix mouse clicks on the collapsed search icon being intercepted by the focused native text editor. The first click now expands search while preserving native editing and input-method behavior.
+- Exercise search through real native window mouse events, including the first click after reopening the clipboard panel.
+
 ## 1.2.5
 
 - Replace the flat app icon with model-generated layered cards in a tactile dock, packaged at native macOS icon sizes.
