@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/public/app-icon.png" width="112" height="112" alt="ClipDock 应用图标：停靠在托盘里的剪贴板">
+  <img src="docs/public/app-icon.png" width="112" height="112" alt="ClipDock 应用图标：停靠在金属托盘里的折角卡片">
 </p>
 
 <h1 align="center">ClipDock</h1>

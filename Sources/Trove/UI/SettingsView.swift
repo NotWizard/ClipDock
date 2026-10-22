@@ -129,8 +129,6 @@ struct SettingsView: View {
     @ObservedObject private var updates = UpdateChecker.shared
     @LocalState private var accessibilityGranted = Paster.shared.hasAccessibility
     @LocalState private var tab: Tab = .general
-    @LocalState private var repositoryDraft = ""
-    @LocalState private var repositoryError: String?
 
     init(prefs: Preferences, store: Store, initialTab: Tab = .general) {
         self.prefs = prefs
@@ -213,7 +211,7 @@ struct SettingsView: View {
         }
         .frame(width: 680, height: 540)
         .background(Theme.windowBackground)
-        .onAppear { accessibilityGranted = Paster.shared.hasAccessibility; repositoryDraft = prefs.updateRepository }
+        .onAppear { accessibilityGranted = Paster.shared.hasAccessibility }
         .onReceive(NotificationCenter.default.publisher(for: .clipdockShowUpdates)) { _ in tab = .about }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = Paster.shared.hasAccessibility
@@ -524,23 +522,6 @@ struct SettingsView: View {
                 .font(.system(size: 12))
             Text("发现新版本时提醒；在 App 内下载、校验并安装重启。")
                 .font(.system(size: 11)).foregroundStyle(.primary.opacity(0.72))
-            HStack(spacing: 8) {
-                TextField("GitHub 仓库：owner/repository", text: $repositoryDraft)
-                    .textFieldStyle(.roundedBorder).font(.system(size: 12))
-                    .accessibilityLabel("GitHub 更新仓库")
-                Button("应用") {
-                    if let repository = GitHubRepository(repositoryDraft) {
-                        prefs.updateRepository = repository.slug
-                        repositoryDraft = repository.slug
-                        repositoryError = nil
-                    } else { repositoryError = "请输入 owner/repository 或 github.com 仓库的 HTTPS 地址。" }
-                }
-                .disabled(repositoryDraft == prefs.updateRepository)
-            }
-            .disabled(updates.installationInProgress)
-            if let repositoryError {
-                Text(repositoryError).font(.system(size: 11)).foregroundStyle(.red)
-            }
             Divider().padding(.vertical, 8)
 
             HStack {

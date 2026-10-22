@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+
+- Replace the flat app icon with model-generated layered cards in a tactile dock, packaged at native macOS icon sizes.
+- Derive matching folded-card menu-bar template marks with distinct recording and paused variants.
+- Simplify About by removing the editable update-repository field and Apply button; release checking stays configured by the app.
+
 ## 1.2.4
 
 - Anchor the clipboard panel to the full display frame and show it above the Dock, including when the Dock is on a screen edge.
