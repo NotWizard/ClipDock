@@ -238,6 +238,6 @@ final class SoundFeedback {
     }
     func playPaste() {
         guard Preferences.shared.soundEffects else { return }
-        NSSound(named: "Pop")?.play()
+        NSSound(named: "Bottle")?.play()
     }
 }
