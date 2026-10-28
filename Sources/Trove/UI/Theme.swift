@@ -2,6 +2,29 @@ import AppKit
 import SwiftUI
 import QuickLookThumbnailing
 
+struct StoreNotice: View {
+    @ObservedObject var store: Store
+    var body: some View {
+        if let notice = store.notice {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(notice, systemImage: "externaldrive.badge.exclamationmark")
+                    .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("打开资料库位置") { NSWorkspace.shared.open(Store.root) }
+                    Spacer()
+                    if store.isReadOnly { Button("重新读取") { store.reload() } }
+                    else { Button("关闭提示") { store.dismissNotice() } }
+                }
+                .font(.system(size: 12))
+            }
+            .padding(14).frame(maxWidth: 560)
+            .foregroundStyle(.primary)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        }
+    }
+}
+
 enum Theme {
     static let accent = Color.accentColor
     static let accentSoft = Color.accentColor.opacity(0.14)

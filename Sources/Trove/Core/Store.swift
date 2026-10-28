@@ -29,6 +29,12 @@ final class Store: ObservableObject {
     @Published private(set) var items: [ClipItem] = []
     @Published private(set) var pinboards: [Pinboard] = []
     @Published var lastCopiedID: UUID?
+    @Published private(set) var isReadOnly = false
+    @Published private(set) var notice: String?
+
+    private static var backupURL: URL { root.appendingPathComponent("library-backup.json") }
+    private var backupIsCurrent = false
+    private var saveFailed = false
 
     private var saveWorkItem: DispatchWorkItem?
 
@@ -47,39 +53,79 @@ final class Store: ObservableObject {
 
     // MARK: Persistence
 
-    private func load() {
-        guard let data = try? Data(contentsOf: Store.manifestURL) else {
-            pinboards = []
-            items = []
-            return
-        }
+    private static func decode(_ data: Data) throws -> Manifest {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let manifest = try? decoder.decode(Manifest.self, from: data) else {
-            pinboards = []
-            items = []
-            return
-        }
-        pinboards = manifest.pinboards
-        items = manifest.items
+        return try decoder.decode(Manifest.self, from: data)
     }
 
-    func save(immediately: Bool = false) {
-        if immediately {
-            saveWorkItem?.cancel()
-            writeManifest()
-            return
+    private func load() {
+        let fm = FileManager.default
+        isReadOnly = false
+        notice = nil
+        let primaryExists = fm.fileExists(atPath: Self.manifestURL.path)
+        let backupExists = fm.fileExists(atPath: Self.backupURL.path)
+        guard primaryExists || backupExists else { items = []; pinboards = []; return }
+        var original: Data?
+        do {
+            if primaryExists {
+                let data = try Data(contentsOf: Self.manifestURL)
+                original = data
+                let manifest = try Self.decode(data)
+                guard manifest.version == 1 else {
+                    isReadOnly = true
+                    notice = "资料库版本较新，请使用较新版本的 ClipDock 打开。原文件已保留。"
+                    return
+                }
+                items = manifest.items
+                pinboards = manifest.pinboards
+                return
+            }
+        } catch {
+            // An unreadable file must not be replaced, even if a backup exists.
+            if original == nil { isReadOnly = true; notice = "无法读取资料库，已暂停写入。请检查访问权限后重新读取。"; return }
         }
+        do {
+            let manifest = try Self.decode(Data(contentsOf: Self.backupURL))
+            guard manifest.version == 1 else { throw CocoaError(.fileReadCorruptFile) }
+            if let original {
+                let preserved = Self.root.appendingPathComponent("library-corrupt-\(UUID().uuidString).json")
+                try original.write(to: preserved, options: .atomic)
+            }
+            items = manifest.items
+            pinboards = manifest.pinboards
+            notice = "已从备份恢复资料库，原有文件已保留以便进一步恢复。"
+        } catch {
+            isReadOnly = true
+            notice = "资料库无法读取，原有文件已保留。请从备份恢复后重新读取。"
+        }
+    }
+
+    func reload() {
+        guard isReadOnly else { return }
         saveWorkItem?.cancel()
+        load()
+    }
+
+    func dismissNotice() { if !isReadOnly { notice = nil } }
+
+    @discardableResult
+    func save(immediately: Bool = false) -> Bool {
+        guard !isReadOnly else { return false }
+        saveWorkItem?.cancel()
+        if immediately { return writeManifest() }
         let work = DispatchWorkItem { [weak self] in
             Task { @MainActor in self?.writeManifest() }
         }
         saveWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        return true
     }
 
     @discardableResult
     private func writeManifest() -> Bool {
+        guard !isReadOnly else { return false }
+        backupIsCurrent = false
         let manifest = Manifest(pinboards: pinboards, items: items)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -88,8 +134,18 @@ final class Store: ObservableObject {
             let data = try encoder.encode(manifest)
             try FileManager.default.createDirectory(at: Store.root, withIntermediateDirectories: true)
             try data.write(to: Store.manifestURL, options: .atomic)
+            if saveFailed { notice = nil; saveFailed = false }
+            do {
+                try data.write(to: Self.backupURL, options: .atomic)
+                backupIsCurrent = true
+            } catch {
+                saveFailed = true
+                notice = "资料库已保存，但备份更新失败。请检查磁盘空间和访问权限。"
+            }
             return true
         } catch {
+            saveFailed = true
+            notice = "资料库未能保存，请检查磁盘空间和访问权限后重试。"
             NSLog("Trove: library save failed — \(error.localizedDescription)")
             return false
         }
@@ -99,6 +155,7 @@ final class Store: ObservableObject {
 
     /// Persists raw pasteboard flavours next to the manifest.
     func storePayloads(for id: UUID, captured: [(type: String, data: Data, index: Int)]) -> [PayloadFile] {
+        guard !isReadOnly else { return [] }
         let dir = Store.itemsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var files: [PayloadFile] = []
@@ -118,6 +175,7 @@ final class Store: ObservableObject {
     }
 
     func storeImage(for id: UUID, data: Data, fileExtension: String = "png") -> String? {
+        guard !isReadOnly else { return nil }
         let dir = Store.itemsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let name = "preview.\(fileExtension)"
@@ -151,6 +209,7 @@ final class Store: ObservableObject {
     /// link previews) because deduplication can discard the incoming id.
     @discardableResult
     func insert(_ item: ClipItem) -> (id: UUID, inserted: Bool) {
+        guard !isReadOnly else { return (item.id, false) }
         if let existing = items.first(where: { $0.checksum == item.checksum && $0.pinboardID == nil }) {
             moveToTop(existing.id)
             return (existing.id, false)
@@ -162,7 +221,7 @@ final class Store: ObservableObject {
     }
 
     func moveToTop(_ id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }) else { return }
         var item = items.remove(at: index)
         item.createdAt = Date()
         items.insert(item, at: 0)
@@ -170,14 +229,14 @@ final class Store: ObservableObject {
     }
 
     func update(_ item: ClipItem) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard !isReadOnly, let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index] = item
         save()
     }
 
     @discardableResult
     func updateText(_ id: UUID, text: String) -> Bool {
-        guard let index = items.firstIndex(where: { $0.id == id }), items[index].kind == .text else { return false }
+        guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }), items[index].kind == .text else { return false }
         let previous = items[index]
         var item = previous
         let data = Data(text.utf8)
@@ -203,6 +262,7 @@ final class Store: ObservableObject {
     }
 
     func delete(ids: Set<UUID>) {
+        guard !isReadOnly else { return }
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
         for item in removed {
@@ -212,7 +272,7 @@ final class Store: ObservableObject {
     }
 
     func togglePin(_ id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].pinned.toggle()
         if !items[index].pinned {
             // unpinning removes it from any pinboard
@@ -222,7 +282,7 @@ final class Store: ObservableObject {
     }
 
     func setPinboard(_ id: UUID, to pinboardID: UUID?) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].pinboardID = pinboardID
         items[index].pinned = pinboardID != nil
         if let pinboardID {
@@ -236,7 +296,7 @@ final class Store: ObservableObject {
     }
 
     func reorder(_ id: UUID, relativeTo target: UUID, after: Bool = false) {
-        guard id != target,
+        guard !isReadOnly, id != target,
               let source = items.first(where: { $0.id == id }),
               let board = source.pinboardID,
               items.first(where: { $0.id == target })?.pinboardID == board else { return }
@@ -251,6 +311,7 @@ final class Store: ObservableObject {
     }
 
     func eraseHistory(keepingPinned: Bool = true) {
+        guard !isReadOnly else { return }
         let survivors = keepingPinned ? items.filter { $0.pinned || $0.pinboardID != nil } : []
         let removed = items.filter { item in !survivors.contains(where: { $0.id == item.id }) }
         items = survivors
@@ -278,24 +339,26 @@ final class Store: ObservableObject {
     @discardableResult
     func createPinboard(name: String, colorHex: String) -> Pinboard {
         let board = Pinboard(name: name, colorHex: colorHex, createdAt: Date())
+        guard !isReadOnly else { return board }
         pinboards.append(board)
         save()
         return board
     }
 
     func renamePinboard(_ id: UUID, name: String) {
-        guard let index = pinboards.firstIndex(where: { $0.id == id }) else { return }
+        guard !isReadOnly, let index = pinboards.firstIndex(where: { $0.id == id }) else { return }
         pinboards[index].name = name
         save()
     }
 
     func recolorPinboard(_ id: UUID, colorHex: String) {
-        guard let index = pinboards.firstIndex(where: { $0.id == id }) else { return }
+        guard !isReadOnly, let index = pinboards.firstIndex(where: { $0.id == id }) else { return }
         pinboards[index].colorHex = colorHex
         save()
     }
 
     func deletePinboard(_ id: UUID) {
+        guard !isReadOnly else { return }
         pinboards.removeAll { $0.id == id }
         for index in items.indices where items[index].pinboardID == id {
             items[index].pinboardID = nil

@@ -26,6 +26,8 @@ struct QuickPasteView: View {
         .frame(height: 332)
         .background(PanelMaterial())
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .disabled(store.isReadOnly)
+        .overlay(alignment: .top) { StoreNotice(store: store).padding(12) }
         .overlay(alignment: .bottom) {
             if let feedback = model.feedback {
                 Label(feedback, systemImage: Paster.shared.lastError == nil ? "checkmark.circle.fill" : "exclamationmark.circle")

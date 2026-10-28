@@ -107,6 +107,7 @@ final class ClipboardMonitor: ObservableObject {
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
         guard changeCount != suppressedChangeCount else { return }
+        guard !store.isReadOnly else { return }
 
         guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return }
         if items.allSatisfy({ $0.types.isEmpty }) { return }

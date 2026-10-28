@@ -228,6 +228,8 @@ struct MainWindowView: View {
             .background(Theme.windowBackground)
         }
         .frame(minWidth: 900, minHeight: 560)
+        .disabled(store.isReadOnly)
+        .overlay(alignment: .top) { StoreNotice(store: store).padding(16) }
         .onReceive(NotificationCenter.default.publisher(for: .troveFocusSearch)) { _ in
             searchFocused = true
         }

@@ -211,6 +211,7 @@ struct SettingsView: View {
         }
         .frame(width: 680, height: 540)
         .background(Theme.windowBackground)
+        .overlay(alignment: .top) { StoreNotice(store: store).padding(16) }
         .onAppear { accessibilityGranted = Paster.shared.hasAccessibility }
         .onReceive(NotificationCenter.default.publisher(for: .clipdockShowUpdates)) { _ in tab = .about }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
