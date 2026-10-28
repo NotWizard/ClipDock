@@ -34,6 +34,20 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
 
 let arguments = CommandLine.arguments
 
+if arguments.contains("--check-capture") {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-capturecheck-\(UUID().uuidString)")
+    setenv("TROVE_TEST_DATA_DIR", root.path, 1)
+    let status = MainActor.assumeIsolated { () -> Int32 in
+        var result: Int32?
+        Task { result = await CaptureChecks.run() }
+        while result == nil { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
+        return result!
+    }
+    try? FileManager.default.removeItem(at: root)
+    UserDefaults.standard.removePersistentDomain(forName: "app.trove.test.\(root.lastPathComponent)")
+    exit(status)
+}
+
 if let index = arguments.firstIndex(of: "--check-store"), arguments.count > index + 1 {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-storecheck-\(UUID().uuidString)")
     setenv("TROVE_TEST_DATA_DIR", root.path, 1)

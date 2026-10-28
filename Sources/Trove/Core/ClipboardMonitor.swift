@@ -9,6 +9,7 @@ import Foundation
 final class ClipboardMonitor: ObservableObject {
     private let store: Store
     private let prefs: Preferences
+    private let pasteboard: NSPasteboard
     private var timer: Timer?
     private var lastChangeCount: Int
     /// Set right after we write to the pasteboard ourselves so we don't echo.
@@ -36,10 +37,11 @@ final class ClipboardMonitor: ObservableObject {
         "com.1password.clipboard.concealed",
     ]
 
-    init(store: Store, prefs: Preferences) {
+    init(store: Store, prefs: Preferences, pasteboard: NSPasteboard = .general) {
         self.store = store
         self.prefs = prefs
-        self.lastChangeCount = NSPasteboard.general.changeCount
+        self.pasteboard = pasteboard
+        self.lastChangeCount = pasteboard.changeCount
     }
 
     // MARK: Lifecycle
@@ -61,7 +63,7 @@ final class ClipboardMonitor: ObservableObject {
     }
 
     func suppressNextChange() {
-        suppressedChangeCount = NSPasteboard.general.changeCount
+        suppressedChangeCount = pasteboard.changeCount
     }
 
     // MARK: Pause
@@ -72,6 +74,7 @@ final class ClipboardMonitor: ObservableObject {
     }
 
     func resume() {
+        lastChangeCount = pasteboard.changeCount
         isPaused = false
         pausedUntil = nil
     }
@@ -100,7 +103,6 @@ final class ClipboardMonitor: ObservableObject {
         clearExpiredPause()
         guard !isPaused else { return }
 
-        let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
