@@ -376,7 +376,9 @@ enum SelfTest {
         prefs.soundEffects = false
         let board = store.createPinboard(name: "常用片段", colorHex: "4C8BF5")
         var fixtureIDs: [UUID] = []
-        for (index, text) in ["第一张卡片：原生剪贴板面板", "第二张卡片：中文输入与快捷选择", "第三张卡片：内容可以直接拖到其他应用"].enumerated() {
+        let panelTexts = ["第一张卡片：原生剪贴板面板", "第二张卡片：中文输入与快捷选择", "第三张卡片：内容可以直接拖到其他应用"]
+            + (4...24).map { "横向滚动检查 \($0)" }
+        for (index, text) in panelTexts.enumerated() {
             var item = ClipItem()
             item.title = text
             item.text = text
@@ -410,6 +412,47 @@ enum SelfTest {
         } else { check("native panel has a display", false) }
         check("native panel stays above the Dock", panel.level.rawValue > CGWindowLevelForKey(.dockWindow))
         check("native search field owns keyboard input", panel.firstResponder is NSTextView)
+        func cardScrollView(in view: NSView?) -> NSScrollView? {
+            guard let view else { return nil }
+            if let scroll = view as? NSScrollView, scroll.frame.height > 200 { return scroll }
+            return view.subviews.lazy.compactMap { cardScrollView(in: $0) }.first
+        }
+        var scrollTrace: [[String: Any]] = []
+        func traceScroll(_ phase: String) {
+            guard let scroll = cardScrollView(in: panel.contentView) else { return }
+            let offset = scroll.contentView.bounds.origin.x
+            scrollTrace.append(["phase": phase, "offsetX": offset, "leadingInset": scroll.contentInsets.left, "panelX": panel.frame.minX,
+                                "viewportWidth": scroll.contentView.bounds.width,
+                                "documentWidth": scroll.documentView?.frame.width ?? 0])
+            print("INFO scroll \(phase): x=\(offset), inset=\(scroll.contentInsets.left), panelX=\(panel.frame.minX)")
+        }
+        traceScroll("initial")
+        if let scroll = cardScrollView(in: panel.contentView) {
+            check("initial cards retain their leading gutter", abs(scroll.contentView.bounds.minX + scroll.contentInsets.left) < 0.5)
+            model.selection = [fixtureIDs[9]]
+            pump()
+            let offset = scroll.contentView.bounds.minX
+            traceScroll("selected")
+            model.searchFocusRequest += 1
+            pump()
+            traceScroll("focus-restored")
+            check("restoring search focus does not reposition visible cards", abs(scroll.contentView.bounds.minX - offset) < 0.5)
+            windows.closeQuickPaste(restoreTarget: false)
+            pump()
+            windows.showQuickPaste()
+            var openingOffsets: [CGFloat] = []
+            let openingDeadline = Date().addingTimeInterval(0.25)
+            while Date() < openingDeadline {
+                pump(0.015)
+                if panel.isVisible && panel.alphaValue > 0 {
+                    openingOffsets.append(scroll.contentView.bounds.minX + scroll.contentInsets.left)
+                    traceScroll("opening")
+                }
+            }
+            check("opening animation preserves the restored horizontal origin", !openingOffsets.isEmpty && openingOffsets.allSatisfy { abs($0) < 0.5 })
+            traceScroll("reopened")
+            check("reopened cards return to their original leading gutter", abs(scroll.contentView.bounds.minX + scroll.contentInsets.left) < 0.5)
+        } else { check("card strip exposes a native scroll view", false) }
         func searchField(in view: NSView?) -> NSSearchField? {
             guard let view else { return nil }
             return (view as? NSSearchField) ?? view.subviews.lazy.compactMap { searchField(in: $0) }.first
@@ -548,6 +591,29 @@ enum SelfTest {
         windows.showQuickPaste()
         pump()
         check("reopening cancels the pending close completion", didClose == false && panel.isVisible)
+        windows.showQuickPaste()
+        pump()
+        if let scroll = cardScrollView(in: panel.contentView) {
+            let offset = scroll.contentView.bounds.minX
+            let x = panel.frame.minX
+            var closingOffsets: [CGFloat] = []
+            model.selection = [fixtureIDs[1]]
+            _ = windows.handlePanelEvent(key(36))
+            ownedChange = clipboard.changeCount
+            let deadline = Date().addingTimeInterval(0.3)
+            while panel.isVisible && Date() < deadline {
+                closingOffsets.append(scroll.contentView.bounds.minX)
+                traceScroll("closing")
+                pump(0.015)
+            }
+            check("Return dismisses without horizontal card or panel movement",
+                  !closingOffsets.isEmpty && closingOffsets.allSatisfy { abs($0 - offset) < 0.5 } && panel.frame.minX == x)
+            windows.showQuickPaste()
+            pump()
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: scrollTrace, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: directory.appendingPathComponent("scroll-check.json"))
+        }
         let shortcut = prefs.activateShortcut
         windows.showOnboarding()
         pump()

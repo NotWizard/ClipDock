@@ -243,20 +243,21 @@ struct QuickPasteView: View {
                             }
                     }
                 }
-                .padding(.horizontal, 24).padding(.vertical, 8)
+                .padding(.vertical, 8)
             }
+            .contentMargins(.horizontal, 24, for: .scrollContent)
             .onChange(of: model.selection) { _, _ in
                 guard let id = model.current?.id else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { proxy.scrollTo(id) }
             }
             .onChange(of: model.destination) { _, _ in
                 if let id = model.items.first?.id { proxy.scrollTo(id, anchor: .leading) }
             }
             .onChange(of: model.items.map(\.id)) { _, _ in
-                if let id = model.current?.id { proxy.scrollTo(id, anchor: .center) }
+                if let id = model.current?.id { proxy.scrollTo(id) }
             }
             .onChange(of: model.searchFocusRequest) { _, _ in
-                if !model.isSearching, let id = model.current?.id { proxy.scrollTo(id, anchor: .leading) }
+                if !model.isSearching, let id = model.current?.id { proxy.scrollTo(id) }
             }
         }
     }
