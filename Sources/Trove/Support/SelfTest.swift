@@ -453,6 +453,47 @@ enum SelfTest {
             traceScroll("reopened")
             check("reopened cards return to their original leading gutter", abs(scroll.contentView.bounds.minX + scroll.contentInsets.left) < 0.5)
         } else { check("card strip exposes a native scroll view", false) }
+        do {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            capture(panel, to: directory.appendingPathComponent("before-drag.png"))
+            let start = CGPoint(x: panel.frame.minX + 140, y: panel.frame.minY + 150)
+            // The single-board fixture puts its tab just right of the toolbar center.
+            let end = CGPoint(x: panel.frame.midX + 40, y: panel.frame.maxY - 28)
+            let screenTop = NSScreen.screens.first!.frame.maxY
+            let pointer = NSEvent.mouseLocation
+            defer { CGWarpMouseCursorPosition(CGPoint(x: pointer.x, y: screenTop - pointer.y)) }
+            print("INFO drag from \(start) to \(end)")
+            Thread.detachNewThread {
+                func post(_ type: CGEventType, _ point: CGPoint) {
+                    let point = CGPoint(x: point.x, y: screenTop - point.y)
+                    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+                    Thread.sleep(forTimeInterval: 0.04)
+                }
+                post(.mouseMoved, start)
+                post(.leftMouseDown, start)
+                for step in 1...20 {
+                    let t = CGFloat(step) / 20
+                    post(.leftMouseDragged, CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t))
+                }
+                Thread.sleep(forTimeInterval: 0.3)
+                post(.leftMouseUp, end)
+            }
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline {
+                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
+                    NSApp.sendEvent(event)
+                }
+            }
+            check("dragging a card onto a top tab assigns its pinboard", store.items.first(where: { $0.id == fixtureIDs[0] })?.pinboardID == board.id)
+            model.selectDestination(.pinboard(board.id))
+            pump()
+            check("dropped card appears when its pinboard is opened", model.items.map(\.id) == [fixtureIDs[0]] && model.items.first?.pinned == true)
+            capture(panel, to: directory.appendingPathComponent("after-drop.png"))
+            store.setPinboard(fixtureIDs[0], to: nil)
+            model.selectDestination(.clipboard)
+            windows.showQuickPaste()
+            pump()
+        }
         func searchField(in view: NSView?) -> NSSearchField? {
             guard let view else { return nil }
             return (view as? NSSearchField) ?? view.subviews.lazy.compactMap { searchField(in: $0) }.first
