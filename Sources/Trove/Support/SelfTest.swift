@@ -320,6 +320,33 @@ enum SelfTest {
         let frame = TroveWindows.clipboardPanelFrame(in: screen)
         check("panel geometry respects secondary-screen origin", frame.minX == -1912 && frame.minY == 128 && frame.width == 1904 && frame.height == 332 && screen.contains(frame))
 
+        // Destructive actions must never act on a selection hidden by a filter.
+        if let hidden = store.items.first(where: { $0.kind == .text }) {
+            let filtered = MainViewModel(store: store, prefs: .shared)
+            let mutations: [(String, (MainViewModel) -> Void)] = [
+                ("search", { $0.query = "not-present-in-any-fixture" }),
+                ("type", { $0.kindFilter = .image }),
+                ("application", { $0.appFilter = "app.fixture.no-match" }),
+                ("date", { $0.dateFilter = .distantFuture }),
+                ("pinboard", { $0.destination = .pinboard(board.id) })
+            ]
+            for (label, filter) in mutations {
+                filtered.query = ""; filtered.kindFilter = nil; filtered.appFilter = nil
+                filtered.dateFilter = nil; filtered.destination = .clipboard
+                filtered.selection = [hidden.id]
+                filter(filtered)
+                filtered.togglePinSelection()
+                filtered.moveSelection(to: board.id)
+                filtered.deleteSelection()
+                check("\(label) filter protects hidden selection from mutations", store.items.first(where: { $0.id == hidden.id }) == hidden)
+            }
+            filtered.query = ""; filtered.kindFilter = nil; filtered.appFilter = nil
+            filtered.dateFilter = nil; filtered.selectDestination(.clipboard)
+            filtered.selection = [hidden.id]
+            filtered.togglePinSelection()
+            check("visible selected items still support pinning", store.items.first(where: { $0.id == hidden.id })?.pinned == !hidden.pinned)
+        }
+
         // Cleanup.
         store.delete(ids: Set(created))
         store.deletePinboard(board.id)

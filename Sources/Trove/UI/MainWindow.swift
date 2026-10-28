@@ -171,18 +171,18 @@ final class MainViewModel: ObservableObject {
     }
 
     func deleteSelection() {
-        let chosen = selection
+        let chosen = Set(selectedItems.map(\.id))
         guard !chosen.isEmpty else { return }
         store.delete(ids: chosen)
         selection = []
     }
 
     func togglePinSelection() {
-        for id in selection { store.togglePin(id) }
+        for id in selectedItems.map(\.id) { store.togglePin(id) }
     }
 
     func moveSelection(to pinboard: UUID?) {
-        for id in selection { store.setPinboard(id, to: pinboard) }
+        for id in selectedItems.map(\.id) { store.setPinboard(id, to: pinboard) }
     }
 
     func revealSelectionInFinder() {
@@ -231,6 +231,7 @@ struct MainWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .troveFocusSearch)) { _ in
             searchFocused = true
         }
+        .onChange(of: model.items.map(\.id)) { _, _ in model.reconcileSelection() }
     }
 
     // MARK: Header
@@ -483,8 +484,7 @@ struct SidebarView: View {
                         selected: model.destination == .clipboard,
                         tint: Theme.accent
                     ) {
-                        model.destination = .clipboard
-                        model.selection = []
+                        model.selectDestination(.clipboard)
                     }
 
                     HStack {
@@ -524,8 +524,7 @@ struct SidebarView: View {
                             tint: Color(nsColor: board.color),
                             dot: true
                         ) {
-                            model.destination = .pinboard(board.id)
-                            model.selection = []
+                            model.selectDestination(.pinboard(board.id))
                         }
                         .overlay(alignment: .trailing) {
                             if dropTarget == board.id {
@@ -610,7 +609,7 @@ struct SidebarView: View {
         .background(.thinMaterial)
         .sheet(isPresented: $newBoardSheet) {
             NewPinboardSheet(store: store) { board in
-                model.destination = .pinboard(board.id)
+                model.selectDestination(.pinboard(board.id))
                 newBoardSheet = false
             }
         }
