@@ -34,6 +34,15 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
 
 let arguments = CommandLine.arguments
 
+if let index = arguments.firstIndex(of: "--check-store"), arguments.count > index + 1 {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-storecheck-\(UUID().uuidString)")
+    setenv("TROVE_TEST_DATA_DIR", root.path, 1)
+    let status = MainActor.assumeIsolated { StoreChecks.run(arguments[index + 1]) }
+    try? FileManager.default.removeItem(at: root)
+    UserDefaults.standard.removePersistentDomain(forName: "app.trove.test.\(root.lastPathComponent)")
+    exit(status)
+}
+
 if arguments.contains("--paste-status") {
     let status: [String: Any] = [
         "bundle": Bundle.main.bundleIdentifier ?? "",

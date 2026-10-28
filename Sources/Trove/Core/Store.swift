@@ -263,7 +263,7 @@ final class Store: ObservableObject {
     private func trimHistory() {
         let limit = Preferences.shared.historyLimit
         guard limit > 0 else { return }
-        let loose = items.filter { $0.pinboardID == nil }
+        let loose = items.filter { $0.pinboardID == nil && !$0.pinned }
         guard loose.count > limit else { return }
         let overflow = loose.dropFirst(limit)
         let ids = Set(overflow.map(\.id))
