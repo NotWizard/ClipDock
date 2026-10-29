@@ -252,6 +252,33 @@ enum SelfTest {
         check("shortcut reset uses valid stack masks",
               KeyCombo.decode(Preferences.shared.pasteStackShortcut)?.modifiers == KeyCombo.command | KeyCombo.control | KeyCombo.option)
 
+        func preferencesFixture(_ values: [String: Any], _ body: (Preferences, UserDefaults) -> Void) {
+            let suite = "app.trove.test.shortcuts.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for (key, value) in values { defaults.set(value, forKey: key) }
+            body(Preferences(defaults: defaults), defaults)
+        }
+        preferencesFixture(["activateShortcut": "9:4352", "quickPasteShortcut": "40:6400"]) { prefs, defaults in
+            check("legal custom shortcut survives migration", prefs.activateShortcut == "9:4352" && prefs.quickPasteShortcut == "40:6400")
+            defaults.synchronize()
+            let once = Preferences(defaults: defaults)
+            let twice = Preferences(defaults: defaults)
+            check("custom shortcut survives repeated preference reloads", once.activateShortcut == "9:4352" && twice.activateShortcut == "9:4352" && defaults.integer(forKey: "shortcutMigrationVersion") == 1)
+        }
+        preferencesFixture(["activateShortcut": "9:4352", "quickPasteShortcut": "9:524288", "pasteStackShortcut": "9:6488064", "plainTextShortcut": "40:6400"]) { prefs, _ in
+            check("complete legacy defaults migrate without clearing custom actions", prefs.activateShortcut == Preferences.defaultActivateShortcut && prefs.quickPasteShortcut == Preferences.defaultQuickPasteShortcut && prefs.pasteStackShortcut == Preferences.defaultPasteStackShortcut && prefs.plainTextShortcut == "40:6400")
+        }
+        preferencesFixture(["activateShortcut": "0:256", "quickPasteShortcut": "9:524288", "pasteStackShortcut": "9:6488064"]) { prefs, _ in
+            check("invalid legacy masks migrate independently", prefs.activateShortcut == "0:256" && prefs.quickPasteShortcut == Preferences.defaultQuickPasteShortcut && prefs.pasteStackShortcut == Preferences.defaultPasteStackShortcut)
+        }
+        preferencesFixture(["activateShortcut": "9:4352", "quickPasteShortcut": "9:524288"]) { prefs, _ in
+            check("migration preserves user choice when a fallback would collide", prefs.activateShortcut == "9:4352" && prefs.quickPasteShortcut.isEmpty)
+        }
+        preferencesFixture(["activateShortcut": "", "quickPasteShortcut": "", "pasteStackShortcut": ""]) { prefs, _ in
+            check("disabled shortcuts remain disabled on migration", prefs.activateShortcut.isEmpty && prefs.quickPasteShortcut.isEmpty && prefs.pasteStackShortcut.isEmpty)
+        }
+
         // Source colors must describe the whole icon, not just its center or a tiny badge.
         func icon(_ draw: @escaping (NSRect) -> Void) -> NSImage {
             NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in

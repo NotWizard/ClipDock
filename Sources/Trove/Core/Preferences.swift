@@ -42,8 +42,10 @@ final class Preferences: ObservableObject {
     var cachedUpdate: Data? { get { d.data(forKey: "cachedUpdate") } set { d.set(newValue, forKey: "cachedUpdate") } }
     var lastNotifiedUpdate: String { get { d.string(forKey: "lastNotifiedUpdate") ?? "" } set { d.set(newValue, forKey: "lastNotifiedUpdate") } }
 
-    private init() {
-        if let testDirectory = ProcessInfo.processInfo.environment["TROVE_TEST_DATA_DIR"] {
+    init(defaults: UserDefaults? = nil) {
+        if let defaults {
+            d = defaults
+        } else if let testDirectory = ProcessInfo.processInfo.environment["TROVE_TEST_DATA_DIR"] {
             d = UserDefaults(suiteName: "app.trove.test.\(URL(fileURLWithPath: testDirectory).lastPathComponent)")!
         } else {
             d = .standard
@@ -94,23 +96,24 @@ final class Preferences: ObservableObject {
         migrateBrokenShortcuts()
     }
 
-    /// Earlier builds shipped Carbon masks that do not exist (524288, 6488064)
-    /// and collided with the activation shortcut. Rewrite them once.
+    /// Migrate the unambiguous legacy defaults once; Control-Command-V is a valid user choice.
     private func migrateBrokenShortcuts() {
-        let broken: [String: String] = [
-            "9:524288": "9:4352",
-            "9:6488064": "9:6400",
-            "9:4352": "9:768",
-        ]
-        if let current = broken[activateShortcut] {
-            activateShortcut = current
+        guard d.integer(forKey: "shortcutMigrationVersion") < 1 else { return }
+        if activateShortcut == "9:4352", quickPasteShortcut == "9:524288", pasteStackShortcut == "9:6488064" {
+            activateShortcut = Self.defaultActivateShortcut
+            quickPasteShortcut = Self.defaultQuickPasteShortcut
+            pasteStackShortcut = Self.defaultPasteStackShortcut
+        } else {
+            let invalid: Set<String> = ["9:524288", "9:6488064"]
+            if invalid.contains(activateShortcut) { activateShortcut = Self.defaultActivateShortcut }
+            if invalid.contains(quickPasteShortcut) {
+                quickPasteShortcut = Self.defaultQuickPasteShortcut == activateShortcut ? "" : Self.defaultQuickPasteShortcut
+            }
+            if invalid.contains(pasteStackShortcut) {
+                pasteStackShortcut = [activateShortcut, quickPasteShortcut].contains(Self.defaultPasteStackShortcut) ? "" : Self.defaultPasteStackShortcut
+            }
         }
-        if let current = broken[quickPasteShortcut], current != activateShortcut {
-            quickPasteShortcut = current
-        }
-        if let current = broken[pasteStackShortcut], current != quickPasteShortcut {
-            pasteStackShortcut = current
-        }
+        d.set(1, forKey: "shortcutMigrationVersion")
     }
 
     func addIgnoredApp(_ bundleID: String) {
