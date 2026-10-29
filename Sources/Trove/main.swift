@@ -34,12 +34,13 @@ final class PanelCheckDelegate: NSObject, NSApplicationDelegate {
 
 let arguments = CommandLine.arguments
 
-if arguments.contains("--check-capture") {
+if arguments.contains("--check-capture") || arguments.contains("--check-ocr") {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-capturecheck-\(UUID().uuidString)")
     setenv("TROVE_TEST_DATA_DIR", root.path, 1)
     let status = MainActor.assumeIsolated { () -> Int32 in
+        if arguments.contains("--check-ocr") { NSApplication.shared.setActivationPolicy(.prohibited) }
         var result: Int32?
-        Task { result = await CaptureChecks.run() }
+        Task { result = arguments.contains("--check-ocr") ? await CaptureChecks.checkOCR() : await CaptureChecks.run() }
         while result == nil { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
         return result!
     }

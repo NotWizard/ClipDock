@@ -5,11 +5,8 @@ import Vision
 
 /// On-device OCR so screenshots become searchable.
 ///
-/// Notes drawn from measurement on this machine: the first Vision text request in
-/// a fresh process pays a one-off Apple Neural Engine model compile (tens of
-/// seconds). Pinning several recognition languages multiplies that cost, so this
-/// service uses the system default language set, downscales large images, and
-/// runs a warm-up request at launch so captures stay fast.
+/// Chinese and English use the same accurate recognition configuration for
+/// background warm-up and live captures. Large images are downscaled first.
 final class OCRService: @unchecked Sendable {
     static let shared = OCRService()
 
@@ -23,13 +20,24 @@ final class OCRService: @unchecked Sendable {
             guard let self, !self.isWarm else { return }
             guard let image = OCRService.warmupImage(),
                   let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .fast
-            request.usesLanguageCorrection = false
-            _ = try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
-            self.isWarm = true
-            NSLog("TroveOCR warm-up finished")
+            let request = Self.textRequest()
+            do {
+                try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+                self.isWarm = true
+                NSLog("TroveOCR warm-up finished")
+            } catch { NSLog("TroveOCR warm-up failed: %@", String(describing: error)) }
         }
+    }
+
+    private static func textRequest() -> VNRecognizeTextRequest {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.automaticallyDetectsLanguage = true
+        let supported = (try? request.supportedRecognitionLanguages()) ?? []
+        let languages = ["zh-Hans", "en-US"].filter { supported.contains($0) }
+        if !languages.isEmpty { request.recognitionLanguages = languages }
+        return request
     }
 
     private static func warmupImage() -> NSImage? {
@@ -38,7 +46,7 @@ final class OCRService: @unchecked Sendable {
         image.lockFocus()
         NSColor.white.setFill()
         NSRect(origin: .zero, size: size).fill()
-        ("warm up 123" as NSString).draw(
+        ("warm up 中文 123" as NSString).draw(
             at: NSPoint(x: 8, y: 24),
             withAttributes: [.font: NSFont.systemFont(ofSize: 28), .foregroundColor: NSColor.black]
         )
@@ -55,19 +63,12 @@ final class OCRService: @unchecked Sendable {
 
         let text = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             queue.async {
-                let request = VNRecognizeTextRequest { request, _ in
-                    let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                    let joined = observations
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .joined(separator: "\n")
-                    continuation.resume(returning: joined)
-                }
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-
+                let request = Self.textRequest()
                 do {
                     try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
                     self.isWarm = true
+                    let joined = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                    continuation.resume(returning: joined)
                 } catch {
                     NSLog("TroveOCR failed: %@", String(describing: error))
                     continuation.resume(returning: "")
