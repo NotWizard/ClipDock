@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// Storage regressions run in a fresh process and temporary library per case.
 @MainActor
@@ -18,6 +19,29 @@ enum StoreChecks {
             ])
             Store.shared.insert(item)
             return item
+        }
+        if name == "pending-delete" {
+            let store = Store.shared
+            Preferences.shared.historyLimit = 0
+            for index in 0..<5 { _ = text("pending history \(index)") }
+            store.save(immediately: true)
+            let primary = Store.root.appendingPathComponent("library.json")
+            let preserved = Store.root.appendingPathComponent("before-pending.json")
+            try! FileManager.default.moveItem(at: primary, to: preserved)
+            try! FileManager.default.createDirectory(at: primary, withIntermediateDirectories: false)
+            Preferences.shared.historyLimit = 1
+            check("failed cap leaves a pending policy without data loss", store.items.count == 5)
+            try! FileManager.default.removeItem(at: primary)
+            try! FileManager.default.moveItem(at: preserved, to: primary)
+            var mutations = 0
+            let observer = store.$items.dropFirst().sink { _ in mutations += 1 }
+            let explicit = store.items.first!.id
+            check("explicit deletion and pending cap commit together", store.delete(ids: [explicit]) && store.items.count == 1 && !store.items.contains { $0.id == explicit })
+            check("pending deletion publishes one atomic mutation", mutations == 1)
+            check("remaining record keeps its payload", store.items.allSatisfy { !store.payloadData(for: $0).isEmpty })
+            observer.cancel()
+            print(failures == 0 ? "STORAGE CHECK OK" : "STORAGE FAILURES: \(failures)")
+            return failures == 0 ? 0 : 1
         }
         if name == "dynamic-limit" {
             let store = Store.shared

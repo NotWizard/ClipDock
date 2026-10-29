@@ -129,8 +129,10 @@ final class Store: ObservableObject {
     func save(immediately: Bool = false) -> Bool {
         guard !isReadOnly else { return false }
         if let limit = pendingHistoryLimit {
+            let previousCount = items.count
             pendingHistoryLimit = nil
             guard applyHistoryLimit(limit) else { return false }
+            if items.count != previousCount { return true }
         }
         saveWorkItem?.cancel()
         if immediately { return writeManifest() }
@@ -293,9 +295,16 @@ final class Store: ObservableObject {
     private func removeItems(_ ids: Set<UUID>) -> Bool {
         guard !isReadOnly else { return false }
         let previous = items
-        let removed = previous.filter { ids.contains($0.id) }
-        items.removeAll { ids.contains($0.id) }
-        guard save(immediately: true) else { items = previous; return false }
+        var removal = ids
+        if let limit = pendingHistoryLimit, limit > 0 {
+            let ordinary = previous.filter { !ids.contains($0.id) && !$0.pinned && $0.pinboardID == nil }
+            removal.formUnion(ordinary.dropFirst(limit).map(\.id))
+        }
+        let removed = previous.filter { removal.contains($0.id) }
+        items.removeAll { removal.contains($0.id) }
+        saveWorkItem?.cancel()
+        guard writeManifest() else { items = previous; return false }
+        pendingHistoryLimit = nil
         // A stale backup may still reference these files; keep them until it is refreshed.
         if backupIsCurrent {
             for item in removed {
