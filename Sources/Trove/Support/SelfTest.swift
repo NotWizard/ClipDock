@@ -741,6 +741,28 @@ enum SelfTest {
         if let data = try? JSONSerialization.data(withJSONObject: scrollTrace, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("scroll-check.json"))
         }
+        if let original = store.items.first(where: { $0.id == fixtureIDs[0] }),
+           let preview = windows.previewWindow(for: original, store: store),
+           let hosting = preview.contentView as? NSHostingView<ItemPreviewWindowView> {
+            preview.makeKeyAndOrderFront(nil)
+            pump()
+            let edited = "preview uses the latest edited text"
+            _ = store.updateText(original.id, text: edited)
+            pump()
+            let updated = store.items.first(where: { $0.id == original.id })!
+            let reopened = windows.previewWindow(for: updated, store: store)
+            check("standalone preview reuses its window with live item data", reopened === preview && hosting.rootView.item.text == edited && preview.title == updated.title)
+            let previewClipboard = NSPasteboard.withUniqueName()
+            _ = Paster.shared.write(items: [hosting.rootView.item], store: store, pasteboard: previewClipboard, promote: false)
+            check("standalone preview exports edited content", previewClipboard.string(forType: .string) == edited)
+            previewClipboard.releaseGlobally()
+            store.togglePin(original.id)
+            pump()
+            check("standalone preview reflects the current pin state", hosting.rootView.item.pinned == true)
+            store.delete(ids: [original.id])
+            pump()
+            check("deleted preview closes and cannot reopen stale data", !hosting.rootView.canUseItem && !preview.isVisible && windows.previewWindow(for: original, store: store) == nil)
+        } else { check("standalone preview is available for a current record", false) }
         let shortcut = prefs.activateShortcut
         windows.showOnboarding()
         pump()

@@ -283,13 +283,18 @@ final class TroveWindows {
     // MARK: Preview
 
     func previewWindow(for item: ClipItem, store: Store) -> NSWindow? {
+        guard let current = store.items.first(where: { $0.id == item.id }) else {
+            previewWindows.removeValue(forKey: item.id)?.orderOut(nil)
+            return nil
+        }
         if let existing = previewWindows[item.id] {
+            existing.title = current.title
             return existing
         }
         let view = ItemPreviewWindowView(
-            item: item,
+            item: current,
             store: store,
-            close: { TroveWindows.shared.previewWindows[item.id]?.orderOut(nil) }
+            close: { TroveWindows.shared.previewWindows.removeValue(forKey: item.id)?.orderOut(nil) }
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -297,7 +302,7 @@ final class TroveWindows {
             backing: .buffered,
             defer: false
         )
-        window.title = item.title
+        window.title = current.title
         window.titlebarAppearsTransparent = true
         window.contentView = NSHostingView(rootView: view)
         window.center()

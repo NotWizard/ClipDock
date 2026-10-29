@@ -4,26 +4,35 @@ import SwiftUI
 // MARK: - Big preview
 
 struct ItemPreviewWindowView: View {
-    let item: ClipItem
+    private let originalItem: ClipItem
     @ObservedObject var store: Store
     var close: () -> Void
 
-    @LocalState private var draftText: String = ""
-    @LocalState private var isEditing = false
+    var item: ClipItem { store.items.first(where: { $0.id == originalItem.id }) ?? originalItem }
+    var canUseItem: Bool { store.items.contains(where: { $0.id == originalItem.id }) }
+
+    init(item: ClipItem, store: Store, close: @escaping () -> Void) {
+        originalItem = item
+        self.store = store
+        self.close = close
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        Group {
+            if canUseItem {
+                VStack(spacing: 0) {
+                    header
+                    Divider()
+                    content
+                    Divider()
+                    footer
+                }
+            } else { Text("条目已删除").frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .frame(minWidth: 420, minHeight: 300)
         .background(Theme.windowBackground)
-        .onAppear {
-            draftText = item.text ?? ""
-        }
+        .overlay(alignment: .top) { StoreNotice(store: store).padding(12) }
+        .onChange(of: canUseItem) { _, available in if !available { close() } }
     }
 
     private var header: some View {
@@ -110,11 +119,13 @@ struct ItemPreviewWindowView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
+                guard canUseItem else { return }
                 Paster.shared.copy(items: [item])
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
             Button {
+                guard canUseItem else { return }
                 Paster.shared.rememberFrontmostTarget()
                 _ = Paster.shared.paste(items: [item], hide: { done in
                     close()
@@ -127,11 +138,12 @@ struct ItemPreviewWindowView: View {
 
             Spacer()
 
-            Button(item.pinned ? "Unpin" : "Pin") { store.togglePin(item.id) }
-            Button("Add to Stack") { TroveWindows.shared.stackModel.append([item.id]) }
+            Button(item.pinned ? "Unpin" : "Pin") { if canUseItem { store.togglePin(item.id) } }
+            Button("Add to Stack") { if canUseItem { TroveWindows.shared.stackModel.append([item.id]) } }
 
             if !item.filePaths.isEmpty || item.imageURL != nil {
                 Button {
+                    guard canUseItem else { return }
                     if !item.filePaths.isEmpty {
                         NSWorkspace.shared.activateFileViewerSelecting(item.filePaths.map { URL(fileURLWithPath: $0) })
                     } else if let url = item.imageURL {
