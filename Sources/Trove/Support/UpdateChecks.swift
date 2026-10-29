@@ -221,9 +221,18 @@ enum UpdateChecks {
         let requestsBeforeReadyCheck = UpdateFixtureProtocol.requests
         await updater.check()
         check("checking while ready reopens the same update", UpdateFixtureProtocol.requests == requestsBeforeReadyCheck && updater.installState == .ready)
+        Store.shared.save(immediately: true)
+        let manifest = Store.root.appendingPathComponent("library.json")
+        let preserved = Store.root.appendingPathComponent("before-install.json")
+        try! FileManager.default.moveItem(at: manifest, to: preserved)
+        try! FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+        updater.performUpdateAction()
+        check("failed library save blocks installation and preserves retry", installed == 0 && updater.installState == .ready && updater.lastError != nil)
+        try! FileManager.default.removeItem(at: manifest)
+        try! FileManager.default.moveItem(at: preserved, to: manifest)
         updater.performUpdateAction()
         updater.performUpdateAction()
-        check("install is committed once and cannot be double-triggered", installed == 1 && updater.installState == .installing)
+        check("install is committed once and cannot be double-triggered", installed == 1 && updater.installState == .installing && updater.lastError == nil)
         updater.dismissUpdateInstallation()
         var acknowledged = false
         updater.showUpdaterError(URLError(.notConnectedToInternet)) { acknowledged = true }

@@ -19,6 +19,37 @@ enum StoreChecks {
             Store.shared.insert(item)
             return item
         }
+        if ["delete-failure", "erase-failure", "trim-failure", "backup-failure"].contains(name) {
+            let store = Store.shared
+            let first = text("first durable payload")
+            let second = text("second durable payload")
+            store.save(immediately: true)
+            let fm = FileManager.default
+            let path = Store.root.appendingPathComponent(name == "backup-failure" ? "library-backup.json" : "library.json")
+            let preserved = Store.root.appendingPathComponent("before-failure.json")
+            try! fm.moveItem(at: path, to: preserved)
+            try! fm.createDirectory(at: path, withIntermediateDirectories: false)
+            if name == "trim-failure" {
+                Preferences.shared.historyLimit = 1
+                _ = text("new capture while full")
+                check("failed trim retains existing records", store.items.contains { $0.id == first.id } && store.items.contains { $0.id == second.id })
+            } else {
+                let success = name == "erase-failure" ? store.eraseHistory(keepingPinned: false) : store.delete(ids: [first.id])
+                if name == "backup-failure" {
+                    check("primary commit can succeed with a stale backup", success && !store.items.contains { $0.id == first.id })
+                } else {
+                    check("failed destructive save reports failure", !success)
+                    check("failed destructive save restores in-memory records", store.items.contains { $0.id == first.id } && store.items.contains { $0.id == second.id })
+                }
+            }
+            check("failure retains the original payload bytes", store.payloadData(for: first).contains { $0.data == Data("first durable payload".utf8) })
+            check("failure provides visible feedback", store.notice != nil)
+            try! fm.removeItem(at: path)
+            try! fm.moveItem(at: preserved, to: path)
+            check("saving works again after the fault is repaired", store.save(immediately: true))
+            print(failures == 0 ? "STORAGE CHECK OK" : "STORAGE FAILURES: \(failures)")
+            return failures == 0 ? 0 : 1
+        }
         let recoveryCases = ["corrupt", "backup-recovery", "missing-primary", "unreadable", "future-version"]
         if recoveryCases.contains(name) {
             let fm = FileManager.default

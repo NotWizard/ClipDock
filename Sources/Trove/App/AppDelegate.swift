@@ -29,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if Store.shared.isReadOnly || Store.shared.save(immediately: true) { return .terminateNow }
+        TroveWindows.shared.showQuickPaste()
+        return .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         Store.shared.save(immediately: true)
     }

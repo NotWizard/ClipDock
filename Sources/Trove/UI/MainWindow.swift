@@ -173,8 +173,7 @@ final class MainViewModel: ObservableObject {
     func deleteSelection() {
         let chosen = Set(selectedItems.map(\.id))
         guard !chosen.isEmpty else { return }
-        store.delete(ids: chosen)
-        selection = []
+        if store.delete(ids: chosen) { selection = [] }
     }
 
     func togglePinSelection() {

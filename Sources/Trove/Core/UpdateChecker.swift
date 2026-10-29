@@ -244,8 +244,14 @@ final class UpdateChecker: NSObject, ObservableObject {
     func performUpdateAction() {
         if installState == .ready {
             guard let reply = installReply else { return }
+            guard Store.shared.isReadOnly || Store.shared.save(immediately: true) else {
+                lastError = Store.shared.notice ?? "资料库未能保存，请重试后再安装更新。"
+                status = lastError!
+                showAvailableUpdate()
+                return
+            }
+            lastError = nil
             installReply = nil
-            Store.shared.save(immediately: true)
             installState = .installing
             status = "正在安装并重启…"
             reply(.install)

@@ -140,7 +140,7 @@ final class Store: ObservableObject {
                 backupIsCurrent = true
             } catch {
                 saveFailed = true
-                notice = "资料库已保存，但备份更新失败。请检查磁盘空间和访问权限。"
+                notice = "资料库已保存，但备份更新失败，磁盘清理暂未完成。请检查空间和访问权限。"
             }
             return true
         } catch {
@@ -261,14 +261,26 @@ final class Store: ObservableObject {
         return false
     }
 
-    func delete(ids: Set<UUID>) {
-        guard !isReadOnly else { return }
-        let removed = items.filter { ids.contains($0.id) }
+    @discardableResult
+    func delete(ids: Set<UUID>) -> Bool { removeItems(ids) }
+
+    @discardableResult
+    private func removeItems(_ ids: Set<UUID>) -> Bool {
+        guard !isReadOnly else { return false }
+        let previous = items
+        let removed = previous.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
-        for item in removed {
-            try? FileManager.default.removeItem(at: Store.itemsDirectory.appendingPathComponent(item.id.uuidString, isDirectory: true))
+        guard save(immediately: true) else { items = previous; return false }
+        // A stale backup may still reference these files; keep them until it is refreshed.
+        if backupIsCurrent {
+            for item in removed {
+                let directory = Self.itemsDirectory.appendingPathComponent(item.id.uuidString)
+                guard FileManager.default.fileExists(atPath: directory.path) else { continue }
+                do { try FileManager.default.removeItem(at: directory) }
+                catch { notice = "历史记录已更新，但部分内容文件未能清理，请检查资料库访问权限。" }
+            }
         }
-        save()
+        return true
     }
 
     func togglePin(_ id: UUID) {
@@ -310,15 +322,10 @@ final class Store: ObservableObject {
         save()
     }
 
-    func eraseHistory(keepingPinned: Bool = true) {
-        guard !isReadOnly else { return }
-        let survivors = keepingPinned ? items.filter { $0.pinned || $0.pinboardID != nil } : []
-        let removed = items.filter { item in !survivors.contains(where: { $0.id == item.id }) }
-        items = survivors
-        for item in removed {
-            try? FileManager.default.removeItem(at: Store.itemsDirectory.appendingPathComponent(item.id.uuidString, isDirectory: true))
-        }
-        save(immediately: true)
+    @discardableResult
+    func eraseHistory(keepingPinned: Bool = true) -> Bool {
+        let removed = items.filter { !keepingPinned || (!$0.pinned && $0.pinboardID == nil) }
+        return removeItems(Set(removed.map(\.id)))
     }
 
     private func trimHistory() {
@@ -326,12 +333,7 @@ final class Store: ObservableObject {
         guard limit > 0 else { return }
         let loose = items.filter { $0.pinboardID == nil && !$0.pinned }
         guard loose.count > limit else { return }
-        let overflow = loose.dropFirst(limit)
-        let ids = Set(overflow.map(\.id))
-        items.removeAll { ids.contains($0.id) }
-        for id in ids {
-            try? FileManager.default.removeItem(at: Store.itemsDirectory.appendingPathComponent(id.uuidString, isDirectory: true))
-        }
+        removeItems(Set(loose.dropFirst(limit).map(\.id)))
     }
 
     // MARK: Pinboards
