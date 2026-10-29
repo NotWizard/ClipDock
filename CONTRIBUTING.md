@@ -184,3 +184,31 @@ python3 Scripts/check-paste.py /tmp/clipdock-paste-check
 ```
 
 权限检查不发送粘贴事件，仅调用系统授权查询，测试产物使用正式Bundle ID与固定证书；回贴检查将一次真实粘贴发送到独立的合成文本接收器。两种检查均不写入个人资料库或替换安装版。未授权时应明确失败，不能声称已完成升级后的授权保留验收。
+
+### 1.2.9 reliability regressions
+
+Storage cases use a new temporary library and preferences domain per invocation. Capture checks use a uniquely named system pasteboard. OCR checks generate synthetic Chinese/English images. The queue receiver extends the existing real caret-paste check and preserves the original clipboard.
+
+```bash
+build/ClipDock.app/Contents/MacOS/Trove --check-store retention
+build/ClipDock.app/Contents/MacOS/Trove --check-store dynamic-limit
+build/ClipDock.app/Contents/MacOS/Trove --check-store pending-delete
+build/ClipDock.app/Contents/MacOS/Trove --check-store corrupt
+build/ClipDock.app/Contents/MacOS/Trove --check-store backup-recovery
+build/ClipDock.app/Contents/MacOS/Trove --check-store missing-primary
+build/ClipDock.app/Contents/MacOS/Trove --check-store unreadable
+build/ClipDock.app/Contents/MacOS/Trove --check-store future-version
+build/ClipDock.app/Contents/MacOS/Trove --check-store delete-failure
+build/ClipDock.app/Contents/MacOS/Trove --check-store erase-failure
+build/ClipDock.app/Contents/MacOS/Trove --check-store trim-failure
+build/ClipDock.app/Contents/MacOS/Trove --check-store backup-failure
+build/ClipDock.app/Contents/MacOS/Trove --check-store dedupe
+build/ClipDock.app/Contents/MacOS/Trove --check-store startup-cleanup
+build/ClipDock.app/Contents/MacOS/Trove --check-store missing-manifest
+build/ClipDock.app/Contents/MacOS/Trove --check-store recovery-cleanup
+build/ClipDock.app/Contents/MacOS/Trove --check-capture
+build/ClipDock.app/Contents/MacOS/Trove --check-ocr
+python3 Scripts/check-paste.py /tmp/clipdock-queue-check --queue
+```
+
+Recovery preserves damaged manifests as `library-corrupt-*.json`. Automatic orphan cleanup is suspended while these files exist so that potentially recoverable content is retained. Ordinary deletion and retention commit the primary manifest first; payload cleanup waits until the current backup no longer needs those bytes. Save failures are visible and destructive changes roll back in memory. A missing manifest alongside existing UUID content directories is treated as a recovery condition, rather than a fresh empty library.

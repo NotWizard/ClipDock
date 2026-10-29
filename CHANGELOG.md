@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.9
+
+- Protect individually pinned entries from history limits, and apply retention changes immediately, on startup, and when pins or Pinboards return content to ordinary history.
+- Restrict delete, pin and move actions to the current visible selection; reject stale Pinboard identifiers.
+- Resume recording without backfilling clipboard content copied during a manual or timed pause.
+- Preserve unreadable, damaged or newer-format libraries, recover valid backups, and show a native recovery notice.
+- Commit destructive changes before removing payloads, roll back failed saves, and prevent quit or installation from discarding unsaved changes.
+- Remove discarded duplicate captures and reclaim confirmed orphan directories while preserving backup references, recovery files and non-library folders.
+- Migrate legacy shortcuts once, preserving valid user choices and disabled actions.
+- Keep queue contents, counts and reorder indices aligned with live records; consume a queued item only after successful delivery.
+- Resolve standalone previews from current data, and close deleted previews instead of copying stale content.
+- Index Chinese and English screenshots with a shared accurate Vision configuration for warm-up and recognition.
+- Keep horizontal cards stable across opening, focus restoration and Return; declare the native drag type so cards can be dropped onto Pinboards.
+- Add isolated storage, capture, OCR, queue delivery and native preview regressions. Keep the persistent signing identity from 1.2.8.
+
 ## 1.2.8
 
 - Replace per-build ad-hoc signatures in releases with one persistent, self-signed code-signing identity; keep the certificate and bundle identifier in the application's designated requirement across versions.
