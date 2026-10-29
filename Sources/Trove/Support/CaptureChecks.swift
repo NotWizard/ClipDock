@@ -40,6 +40,13 @@ enum CaptureChecks {
         await write("concealed", marker: "org.nspasteboard.ConcealedType")
         await write("transient", marker: "org.nspasteboard.TransientType")
         check("privacy markers remain effective after resumes", !store.items.contains { ["concealed", "transient"].contains($0.text ?? "") })
+        var capturedIDs: [UUID] = []
+        monitor.onCapture = { capturedIDs.append($0.id) }
+        await write("duplicate capture")
+        await write("duplicate capture")
+        check("duplicate notifications use the retained record ID", capturedIDs.count == 2 && Set(capturedIDs).count == 1 && store.items.contains { $0.id == capturedIDs[0] })
+        let directories = (try? FileManager.default.contentsOfDirectory(at: Store.itemsDirectory, includingPropertiesForKeys: nil)) ?? []
+        check("duplicate capture leaves no unreferenced directories", directories.count == store.items.count)
         print(failures == 0 ? "CAPTURE CHECK OK" : "CAPTURE FAILURES: \(failures)")
         return failures == 0 ? 0 : 1
     }

@@ -35,6 +35,7 @@ final class Store: ObservableObject {
     private static var backupURL: URL { root.appendingPathComponent("library-backup.json") }
     private var backupIsCurrent = false
     private var saveFailed = false
+    private var needsCleanup = false
 
     private var saveWorkItem: DispatchWorkItem?
 
@@ -49,6 +50,7 @@ final class Store: ObservableObject {
     private init() {
         try? FileManager.default.createDirectory(at: Store.itemsDirectory, withIntermediateDirectories: true)
         load()
+        if !isReadOnly { cleanupUnreferenced() }
     }
 
     // MARK: Persistence
@@ -65,7 +67,14 @@ final class Store: ObservableObject {
         notice = nil
         let primaryExists = fm.fileExists(atPath: Self.manifestURL.path)
         let backupExists = fm.fileExists(atPath: Self.backupURL.path)
-        guard primaryExists || backupExists else { items = []; pinboards = []; return }
+        guard primaryExists || backupExists else {
+            let directories = (try? fm.contentsOfDirectory(at: Self.itemsDirectory, includingPropertiesForKeys: nil)) ?? []
+            if directories.contains(where: { UUID(uuidString: $0.lastPathComponent) != nil }) {
+                isReadOnly = true
+                notice = "资料库清单缺失，现有内容文件已保留。请恢复清单后重新读取。"
+            }
+            return
+        }
         var original: Data?
         do {
             if primaryExists {
@@ -140,8 +149,10 @@ final class Store: ObservableObject {
                 backupIsCurrent = true
             } catch {
                 saveFailed = true
+                needsCleanup = true
                 notice = "资料库已保存，但备份更新失败，磁盘清理暂未完成。请检查空间和访问权限。"
             }
+            if backupIsCurrent && needsCleanup { needsCleanup = false; cleanupUnreferenced() }
             return true
         } catch {
             saveFailed = true
@@ -211,6 +222,9 @@ final class Store: ObservableObject {
     func insert(_ item: ClipItem) -> (id: UUID, inserted: Bool) {
         guard !isReadOnly else { return (item.id, false) }
         if let existing = items.first(where: { $0.checksum == item.checksum && $0.pinboardID == nil }) {
+            if item.id != existing.id {
+                try? FileManager.default.removeItem(at: Self.itemsDirectory.appendingPathComponent(item.id.uuidString))
+            }
             moveToTop(existing.id)
             return (existing.id, false)
         }
@@ -277,7 +291,7 @@ final class Store: ObservableObject {
                 let directory = Self.itemsDirectory.appendingPathComponent(item.id.uuidString)
                 guard FileManager.default.fileExists(atPath: directory.path) else { continue }
                 do { try FileManager.default.removeItem(at: directory) }
-                catch { notice = "历史记录已更新，但部分内容文件未能清理，请检查资料库访问权限。" }
+                catch { needsCleanup = true; notice = "历史记录已更新，但部分内容文件未能清理，请检查资料库访问权限。" }
             }
         }
         return true
@@ -325,7 +339,9 @@ final class Store: ObservableObject {
     @discardableResult
     func eraseHistory(keepingPinned: Bool = true) -> Bool {
         let removed = items.filter { !keepingPinned || (!$0.pinned && $0.pinboardID == nil) }
-        return removeItems(Set(removed.map(\.id)))
+        let success = removeItems(Set(removed.map(\.id)))
+        if success { cleanupUnreferenced() }
+        return success
     }
 
     private func trimHistory() {
@@ -334,6 +350,31 @@ final class Store: ObservableObject {
         let loose = items.filter { $0.pinboardID == nil && !$0.pinned }
         guard loose.count > limit else { return }
         removeItems(Set(loose.dropFirst(limit).map(\.id)))
+    }
+
+    /// Only UUID directories unreferenced by both valid manifests are disposable.
+    private func cleanupUnreferenced() {
+        guard !isReadOnly,
+              let data = try? Data(contentsOf: Self.manifestURL),
+              let primary = try? Self.decode(data), primary.version == 1,
+              let rootFiles = try? FileManager.default.contentsOfDirectory(at: Self.root, includingPropertiesForKeys: nil) else { return }
+        if rootFiles.contains(where: { $0.lastPathComponent.hasPrefix("library-corrupt-") }) {
+            if notice == nil { notice = "资料库中有恢复保留文件，已暂缓自动清理。可打开资料库位置检查。" }
+            return
+        }
+        var referenced = Set(primary.items.map(\.id)).union(items.map(\.id))
+        if FileManager.default.fileExists(atPath: Self.backupURL.path) {
+            guard let data = try? Data(contentsOf: Self.backupURL), let backup = try? Self.decode(data), backup.version == 1 else { return }
+            referenced.formUnion(backup.items.map(\.id))
+        }
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let directories = try? FileManager.default.contentsOfDirectory(at: Self.itemsDirectory, includingPropertiesForKeys: Array(keys)) else { return }
+        for directory in directories {
+            guard let id = UUID(uuidString: directory.lastPathComponent), !referenced.contains(id),
+                  let values = try? directory.resourceValues(forKeys: keys), values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            do { try FileManager.default.removeItem(at: directory) }
+            catch { needsCleanup = true; notice = "部分历史内容文件未能清理，请检查资料库访问权限。" }
+        }
     }
 
     // MARK: Pinboards

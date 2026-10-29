@@ -146,7 +146,7 @@ final class ClipboardMonitor: ObservableObject {
         }
 
         let stored = store.insert(item)
-        onCapture?(item)
+        if let actual = store.items.first(where: { $0.id == stored.id }) { onCapture?(actual) }
         // A duplicate capture is discarded; enrichment must target the item that
         // actually lives in the library.
         guard stored.inserted else { return }

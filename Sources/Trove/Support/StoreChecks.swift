@@ -19,6 +19,51 @@ enum StoreChecks {
             Store.shared.insert(item)
             return item
         }
+        if name == "dedupe" {
+            let store = Store.shared
+            let first = text("duplicate bytes")
+            for _ in 0..<100 {
+                var duplicate = first; duplicate.id = UUID()
+                duplicate.payloads = store.storePayloads(for: duplicate.id, captured: [(NSPasteboard.PasteboardType.string.rawValue, Data("duplicate bytes".utf8), 0)])
+                duplicate.imageName = store.storeImage(for: duplicate.id, data: Data([1,2,3]))
+                let result = store.insert(duplicate)
+                check("duplicate uses original ID", !result.inserted && result.id == first.id)
+            }
+            let directories = try! FileManager.default.contentsOfDirectory(at: Store.itemsDirectory, includingPropertiesForKeys: nil)
+            check("100 duplicate captures retain exactly one directory", directories.count == 1)
+            _ = store.insert(first)
+            check("reinserting the same ID keeps original bytes", store.payloadData(for: first).contains { $0.data == Data("duplicate bytes".utf8) })
+            _ = store.eraseHistory(keepingPinned: false)
+            check("erase leaves no duplicate payload directories", (try! FileManager.default.contentsOfDirectory(at: Store.itemsDirectory, includingPropertiesForKeys: nil)).isEmpty)
+            print(failures == 0 ? "STORAGE CHECK OK" : "STORAGE FAILURES: \(failures)")
+            return failures == 0 ? 0 : 1
+        }
+        if ["startup-cleanup", "missing-manifest", "recovery-cleanup"].contains(name) {
+            let fm = FileManager.default
+            let orphanID = UUID()
+            let orphan = Store.itemsDirectory.appendingPathComponent(orphanID.uuidString)
+            try! fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+            try! Data("orphan bytes".utf8).write(to: orphan.appendingPathComponent("payload.bin"))
+            let primary = Store.root.appendingPathComponent("library.json")
+            let empty = try! JSONSerialization.data(withJSONObject: ["version":1,"pinboards":[],"items":[]])
+            if name != "missing-manifest" { try! empty.write(to: primary) }
+            if name == "recovery-cleanup" {
+                try! empty.write(to: Store.root.appendingPathComponent("library-backup.json"))
+                try! Data("{broken".utf8).write(to: primary)
+            }
+            let foreign = Store.itemsDirectory.appendingPathComponent("foreign-cache")
+            try! fm.createDirectory(at: foreign, withIntermediateDirectories: false)
+            let store = Store.shared
+            if name == "startup-cleanup" {
+                check("healthy startup cleans legacy orphan directories", !fm.fileExists(atPath: orphan.path))
+            } else {
+                check("recovery does not discard unindexed content", fm.fileExists(atPath: orphan.path))
+                check("missing or damaged metadata is visible", store.notice != nil)
+            }
+            check("non-UUID folders are never cleaned automatically", fm.fileExists(atPath: foreign.path))
+            print(failures == 0 ? "STORAGE CHECK OK" : "STORAGE FAILURES: \(failures)")
+            return failures == 0 ? 0 : 1
+        }
         if ["delete-failure", "erase-failure", "trim-failure", "backup-failure"].contains(name) {
             let store = Store.shared
             let first = text("first durable payload")
