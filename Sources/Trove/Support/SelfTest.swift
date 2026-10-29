@@ -32,6 +32,10 @@ enum SelfTest {
         var created: [UUID] = []
         let board = store.createPinboard(name: "\(marker) board", colorHex: "34A853")
 
+        // Keep the fixture within one captured day, including immediately after midnight.
+        let fixtureNow = Date()
+        let fixtureDay = Calendar.current.startOfDay(for: fixtureNow)
+        let fixtureSpacing = min(60, fixtureNow.timeIntervalSince(fixtureDay) / Double(ItemKind.allCases.count))
         // Insert one item per kind.
         for (index, kind) in ItemKind.allCases.enumerated() {
             var item = ClipItem()
@@ -41,7 +45,7 @@ enum SelfTest {
             item.title = "\(marker) title \(index)"
             item.searchText = "\(marker) body zebra\(index)"
             item.checksum = "\(marker)-checksum-\(index)"
-            item.createdAt = Date().addingTimeInterval(TimeInterval(-index * 60))
+            item.createdAt = fixtureNow.addingTimeInterval(-Double(index) * fixtureSpacing)
             let result = store.insert(item)
             if result.inserted { created.append(result.id) }
         }
@@ -60,7 +64,7 @@ enum SelfTest {
         let appFiltered = store.items(in: nil, query: marker, kind: nil, bundleID: "com.example.app2", since: nil)
         check("app filter", appFiltered.count == 1, "got \(appFiltered.count)")
 
-        let today = store.items(in: nil, query: marker, kind: nil, bundleID: nil, since: Calendar.current.startOfDay(for: Date()))
+        let today = store.items(in: nil, query: marker, kind: nil, bundleID: nil, since: fixtureDay)
         check("date filter keeps today's items", today.count == ItemKind.allCases.count, "got \(today.count)")
 
         // Pinboard movement.
