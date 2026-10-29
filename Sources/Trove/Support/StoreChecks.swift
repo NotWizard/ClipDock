@@ -19,6 +19,42 @@ enum StoreChecks {
             Store.shared.insert(item)
             return item
         }
+        if name == "dynamic-limit" {
+            let store = Store.shared
+            let prefs = Preferences.shared
+            prefs.historyLimit = 0
+            let pinned = text("protected pin")
+            store.togglePin(pinned.id)
+            let board = store.createPinboard(name: "protected", colorHex: "4C8BF5")
+            let member = text("protected member")
+            store.setPinboard(member.id, to: board.id)
+            for i in 0..<5 { _ = text("history \(i)") }
+            prefs.historyLimit = 2
+            check("lowering the cap applies before another capture", store.items.filter { !$0.pinned && $0.pinboardID == nil }.count == 2)
+            check("lowering cap preserves fixed and board records", store.items.contains { $0.id == pinned.id } && store.items.contains { $0.id == member.id })
+            store.togglePin(pinned.id)
+            check("unpinning reapplies the cap", store.items.filter { !$0.pinned && $0.pinboardID == nil }.count == 2)
+            store.deletePinboard(board.id)
+            check("deleting a board reapplies the cap", store.items.count == 2)
+            let retained = store.items.first!
+            store.setPinboard(retained.id, to: UUID())
+            check("stale board identifiers cannot hide records", store.items.first(where: { $0.id == retained.id }) == retained)
+            prefs.historyLimit = 0
+            for i in 0..<3 { _ = text("unlimited \(i)") }
+            check("zero cap permits unlimited ordinary history", store.items.count == 5)
+            store.save(immediately: true)
+            let primary = Store.root.appendingPathComponent("library.json")
+            let preserved = Store.root.appendingPathComponent("before-limit.json")
+            try! FileManager.default.moveItem(at: primary, to: preserved)
+            try! FileManager.default.createDirectory(at: primary, withIntermediateDirectories: false)
+            prefs.historyLimit = 1
+            check("failed immediate trimming keeps all original records", store.items.count == 5 && store.items.allSatisfy { !store.payloadData(for: $0).isEmpty })
+            try! FileManager.default.removeItem(at: primary)
+            try! FileManager.default.moveItem(at: preserved, to: primary)
+            check("retrying save reapplies the pending cap", store.save(immediately: true) && store.items.count == 1)
+            print(failures == 0 ? "STORAGE CHECK OK" : "STORAGE FAILURES: \(failures)")
+            return failures == 0 ? 0 : 1
+        }
         if name == "dedupe" {
             let store = Store.shared
             let first = text("duplicate bytes")

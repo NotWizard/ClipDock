@@ -36,6 +36,8 @@ final class Store: ObservableObject {
     private var backupIsCurrent = false
     private var saveFailed = false
     private var needsCleanup = false
+    private var pendingHistoryLimit: Int?
+    private var historyLimitObserver: AnyCancellable?
 
     private var saveWorkItem: DispatchWorkItem?
 
@@ -51,6 +53,10 @@ final class Store: ObservableObject {
         try? FileManager.default.createDirectory(at: Store.itemsDirectory, withIntermediateDirectories: true)
         load()
         if !isReadOnly { cleanupUnreferenced() }
+        historyLimitObserver = Preferences.shared.$historyLimit.dropFirst().removeDuplicates().sink { [weak self] limit in
+            self?.applyHistoryLimit(limit)
+        }
+        applyHistoryLimit()
     }
 
     // MARK: Persistence
@@ -114,6 +120,7 @@ final class Store: ObservableObject {
         guard isReadOnly else { return }
         saveWorkItem?.cancel()
         load()
+        applyHistoryLimit()
     }
 
     func dismissNotice() { if !isReadOnly { notice = nil } }
@@ -121,6 +128,10 @@ final class Store: ObservableObject {
     @discardableResult
     func save(immediately: Bool = false) -> Bool {
         guard !isReadOnly else { return false }
+        if let limit = pendingHistoryLimit {
+            pendingHistoryLimit = nil
+            guard applyHistoryLimit(limit) else { return false }
+        }
         saveWorkItem?.cancel()
         if immediately { return writeManifest() }
         let work = DispatchWorkItem { [weak self] in
@@ -229,7 +240,7 @@ final class Store: ObservableObject {
             return (existing.id, false)
         }
         items.insert(item, at: 0)
-        trimHistory()
+        applyHistoryLimit()
         save()
         return (item.id, true)
     }
@@ -299,16 +310,20 @@ final class Store: ObservableObject {
 
     func togglePin(_ id: UUID) {
         guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let previous = items
         items[index].pinned.toggle()
         if !items[index].pinned {
             // unpinning removes it from any pinboard
             items[index].pinboardID = nil
         }
+        guard applyHistoryLimit() else { items = previous; return }
         save()
     }
 
     func setPinboard(_ id: UUID, to pinboardID: UUID?) {
         guard !isReadOnly, let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard pinboardID == nil || pinboards.contains(where: { $0.id == pinboardID }) else { return }
+        let previous = items
         items[index].pinboardID = pinboardID
         items[index].pinned = pinboardID != nil
         if let pinboardID {
@@ -318,6 +333,7 @@ final class Store: ObservableObject {
                 pinboards[pIndex].name = "Pinboard"
             }
         }
+        guard applyHistoryLimit() else { items = previous; return }
         save()
     }
 
@@ -344,12 +360,17 @@ final class Store: ObservableObject {
         return success
     }
 
-    private func trimHistory() {
-        let limit = Preferences.shared.historyLimit
-        guard limit > 0 else { return }
+    @discardableResult
+    func applyHistoryLimit(_ requested: Int? = nil) -> Bool {
+        guard !isReadOnly else { return false }
+        let limit = requested ?? Preferences.shared.historyLimit
+        pendingHistoryLimit = nil
+        guard limit > 0 else { return true }
         let loose = items.filter { $0.pinboardID == nil && !$0.pinned }
-        guard loose.count > limit else { return }
-        removeItems(Set(loose.dropFirst(limit).map(\.id)))
+        guard loose.count > limit else { return true }
+        let success = removeItems(Set(loose.dropFirst(limit).map(\.id)))
+        if !success { pendingHistoryLimit = limit }
+        return success
     }
 
     /// Only UUID directories unreferenced by both valid manifests are disposable.
@@ -401,12 +422,15 @@ final class Store: ObservableObject {
     }
 
     func deletePinboard(_ id: UUID) {
-        guard !isReadOnly else { return }
+        guard !isReadOnly, pinboards.contains(where: { $0.id == id }) else { return }
+        let previousItems = items
+        let previousBoards = pinboards
         pinboards.removeAll { $0.id == id }
         for index in items.indices where items[index].pinboardID == id {
             items[index].pinboardID = nil
             items[index].pinned = false
         }
+        guard applyHistoryLimit() else { items = previousItems; pinboards = previousBoards; return }
         save()
     }
 
