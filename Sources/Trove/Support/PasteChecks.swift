@@ -3,17 +3,18 @@ import AppKit
 final class PasteCheckDelegate: NSObject, NSApplicationDelegate {
     let pid: pid_t
     let directory: URL
+    let queueMode: Bool
     var status: Int32 = 1
-    init(pid: pid_t, directory: URL) { self.pid = pid; self.directory = directory }
+    init(pid: pid_t, directory: URL, queueMode: Bool = false) { self.pid = pid; self.directory = directory; self.queueMode = queueMode }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        status = MainActor.assumeIsolated { PasteChecks.run(pid: pid, directory: directory) }
+        status = MainActor.assumeIsolated { PasteChecks.run(pid: pid, directory: directory, queueMode: queueMode) }
         NSApp.stop(nil)
     }
 }
 
 @MainActor
 enum PasteChecks {
-    static func run(pid: pid_t, directory: URL) -> Int32 {
+    static func run(pid: pid_t, directory: URL, queueMode: Bool = false) -> Int32 {
         var failures = 0
         func check(_ name: String, _ condition: Bool) {
             print("\(condition ? "PASS" : "FAIL")  \(name)")
@@ -78,10 +79,17 @@ enum PasteChecks {
         let model = TroveApp.shared.mainModel
         model.selection = [chosen.id]
         let before = store.items.map(\.id)
-        windows.commitSelection()
+        let queue = TroveApp.shared.stackModel
+        if queueMode {
+            queue.append([chosen.id])
+            queue.pasteNext { windows.hideAll() }
+        } else { windows.commitSelection() }
         ownedChange = pb.changeCount
-        check("commit starts an animated close with unchanged card order", windows.quickPanel?.isVisible == true && store.items.map(\.id) == before && Paster.shared.isPasting)
-        windows.commitSelection()
+        check("commit begins with unchanged card order", store.items.map(\.id) == before && Paster.shared.isPasting && (queueMode || windows.quickPanel?.isVisible == true))
+        if queueMode {
+            check("queue retains its item until paste completes", queue.queue == [chosen.id])
+            queue.pasteNext { windows.hideAll() }
+        } else { windows.commitSelection() }
         let receipt = directory.appendingPathComponent("received.json")
         let deadline = Date().addingTimeInterval(4)
         while !FileManager.default.fileExists(atPath: receipt.path) && Date() < deadline { pump(0.05) }
@@ -93,6 +101,7 @@ enum PasteChecks {
         check("the panel is hidden before delivery completes", windows.quickPanel?.isVisible == false && !Paster.shared.isPasting)
         check("successful delivery promotes the existing history item", store.items.first?.id == chosen.id && store.totalCount == 3)
         check("original receiver remains active after delivery", receiver.isActive)
+        if queueMode { check("successful queue delivery consumes its item", queue.isEmpty && queue.queue.isEmpty) }
         windows.showQuickPaste()
         pump(0.3)
         check("the next invocation begins with the pasted item", model.items.first?.id == chosen.id && model.current?.id == chosen.id)

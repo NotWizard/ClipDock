@@ -351,6 +351,34 @@ enum SelfTest {
         let frame = TroveWindows.clipboardPanelFrame(in: screen)
         check("panel geometry respects secondary-screen origin", frame.minX == -1912 && frame.minY == 128 && frame.width == 1904 && frame.height == 332 && screen.contains(frame))
 
+        // Queue state follows live IDs, including failed storage mutations.
+        var queueFixtures: [UUID] = []
+        for index in 0..<3 {
+            var item = ClipItem(); item.text = "queue fixture \(index)"; item.title = item.text!
+            item.checksum = UUID().uuidString
+            store.insert(item); created.append(item.id); queueFixtures.append(item.id)
+        }
+        let queue = PasteStackModel(store: store)
+        queue.append(queueFixtures + [queueFixtures[0], UUID()])
+        check("queue rejects duplicate and nonexistent IDs", queue.queue == queueFixtures)
+        store.delete(ids: [queueFixtures[0]])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check("queue removes deleted records", queue.queue == Array(queueFixtures.dropFirst()))
+        queue.move(from: IndexSet(integer: 0), to: 2)
+        check("queue reorder uses the visible indices", queue.queue == [queueFixtures[2], queueFixtures[1]])
+        queue.move(from: IndexSet(integer: 10), to: 99)
+        check("stale queue reorder indices are ignored", queue.queue == [queueFixtures[2], queueFixtures[1]])
+        var broken = ClipItem(); broken.kind = .unknown; broken.checksum = UUID().uuidString
+        store.insert(broken); created.append(broken.id)
+        queue.clear(); queue.append([broken.id])
+        let clipboardCount = NSPasteboard.general.changeCount
+        queue.copyNext()
+        queue.pasteNext(hide: {})
+        check("failed queue copy and paste retain the item without changing clipboard", queue.queue == [broken.id] && NSPasteboard.general.changeCount == clipboardCount)
+        store.delete(ids: [broken.id])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check("deleted final queue entry restores the empty state", queue.isEmpty && queue.queue.isEmpty)
+
         // Destructive actions must never act on a selection hidden by a filter.
         if let hidden = store.items.first(where: { $0.kind == .text }) {
             let filtered = MainViewModel(store: store, prefs: .shared)

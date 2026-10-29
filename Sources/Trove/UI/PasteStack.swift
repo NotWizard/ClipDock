@@ -1,27 +1,39 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// A queue of items that are pasted one at a time — handy for filling in forms
 /// or moving several snippets between apps.
 @MainActor
 final class PasteStackModel: ObservableObject {
-    @Published var queue: [UUID] = []
+    @Published private(set) var queue: [UUID] = []
     @Published var feedback: String?
 
     private let store: Store
+    private var itemsObserver: AnyCancellable?
 
     init(store: Store) {
         self.store = store
+        // Read settled state after a synchronous Store mutation or rollback.
+        itemsObserver = store.$items.receive(on: RunLoop.main).sink { [weak self] _ in self?.reconcile() }
     }
 
     var items: [ClipItem] {
         queue.compactMap { id in store.items.first(where: { $0.id == id }) }
     }
 
-    var isEmpty: Bool { queue.isEmpty }
+    var isEmpty: Bool { items.isEmpty }
+
+    private func reconcile() {
+        let valid = Set(store.items.map(\.id))
+        let retained = queue.filter { valid.contains($0) }
+        if retained != queue { queue = retained }
+    }
 
     func append(_ ids: [UUID]) {
-        for id in ids where !queue.contains(id) {
+        reconcile()
+        let valid = Set(store.items.map(\.id))
+        for id in ids where valid.contains(id) && !queue.contains(id) {
             queue.append(id)
         }
     }
@@ -35,11 +47,14 @@ final class PasteStackModel: ObservableObject {
     }
 
     func move(from source: IndexSet, to destination: Int) {
+        reconcile()
+        guard source.allSatisfy({ queue.indices.contains($0) }), (0...queue.count).contains(destination) else { return }
         queue.move(fromOffsets: source, toOffset: destination)
     }
 
     /// Pastes the head of the queue and advances.
     func pasteNext(hide: @escaping () -> Void) {
+        reconcile()
         guard let first = items.first else { return }
         Paster.shared.rememberFrontmostTarget()
         let started = Paster.shared.paste(items: [first], hide: { done in
@@ -55,6 +70,7 @@ final class PasteStackModel: ObservableObject {
     }
 
     func copyNext() {
+        reconcile()
         guard let first = items.first else { return }
         if Paster.shared.copy(items: [first]) {
             queue.removeAll { $0 == first.id }
@@ -77,7 +93,7 @@ struct PasteStackView: View {
                     .foregroundStyle(Theme.accent)
                 Text("Paste Stack")
                     .font(.system(size: 13, weight: .semibold))
-                Text("\(model.queue.count) queued")
+                Text("\(model.items.count) queued")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 Spacer()

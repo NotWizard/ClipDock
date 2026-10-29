@@ -104,6 +104,8 @@ enum StoreChecks {
             let store = Store.shared
             let first = text("first durable payload")
             let second = text("second durable payload")
+            let queue = PasteStackModel(store: store)
+            queue.append([first.id, second.id])
             store.save(immediately: true)
             let fm = FileManager.default
             let path = Store.root.appendingPathComponent(name == "backup-failure" ? "library-backup.json" : "library.json")
@@ -122,6 +124,10 @@ enum StoreChecks {
                     check("failed destructive save reports failure", !success)
                     check("failed destructive save restores in-memory records", store.items.contains { $0.id == first.id } && store.items.contains { $0.id == second.id })
                 }
+            }
+            if name != "backup-failure" {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                check("rolled-back deletion preserves queued records", queue.queue == [first.id, second.id])
             }
             check("failure retains the original payload bytes", store.payloadData(for: first).contains { $0.data == Data("first durable payload".utf8) })
             check("failure provides visible feedback", store.notice != nil)

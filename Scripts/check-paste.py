@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify a real Cmd-V into a disposable native receiver; preserve the user's clipboard."""
+import argparse
 import json
 import plistlib
 import shutil
@@ -12,7 +13,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / 'build/ClipDock.app'
-OUTPUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / 'build/paste-check'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('output', type=Path, nargs='?', default=ROOT / 'build/paste-check')
+parser.add_argument('--queue', action='store_true', help='Exercise the actual paste queue instead of a panel selection.')
+args = parser.parse_args()
+OUTPUT = args.output.resolve()
 OUTPUT.mkdir(parents=True, exist_ok=True)
 WORK = Path(tempfile.mkdtemp(prefix='ClipDock-paste-receiver-'))
 app = WORK / 'Receiver.app'
@@ -83,7 +88,7 @@ try:
     paste_log.unlink(missing_ok=True)
     # Test the app's own permissions, not permissions inherited from the shell.
     subprocess.run(['open', '-n', '-g', '--stdout', str(paste_log), '--stderr', str(OUTPUT / 'host.log'),
-                    str(APP), '--args', '--check-paste', str(receiver.pid), str(OUTPUT)], check=True)
+                    str(APP), '--args', '--check-paste', str(receiver.pid), str(OUTPUT)] + (['--queue'] if args.queue else []), check=True)
     deadline = time.monotonic() + 20
     while True:
         report = paste_log.read_text() if paste_log.exists() else ''

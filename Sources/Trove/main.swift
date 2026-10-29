@@ -77,7 +77,7 @@ if let index = arguments.firstIndex(of: "--check-paste"), arguments.count > inde
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipDock-pastecheck-\(UUID().uuidString)")
     setenv("TROVE_TEST_DATA_DIR", root.path, 1)
     let app = NSApplication.shared
-    let delegate = PasteCheckDelegate(pid: pid, directory: URL(fileURLWithPath: arguments[index + 2], isDirectory: true))
+    let delegate = PasteCheckDelegate(pid: pid, directory: URL(fileURLWithPath: arguments[index + 2], isDirectory: true), queueMode: arguments.contains("--queue"))
     app.delegate = delegate
     app.setActivationPolicy(.accessory)
     app.run()
